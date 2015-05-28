@@ -27,15 +27,15 @@ connection failover| When a connection currently being used between MaxScale and
 
 The MaxScale configuration is read from a file which can be located in a number of placing, MaxScale will search for the configuration file in a number of locations.
 
-1. If the environment variable `MAXSCALE_HOME` is set then MaxScale will look for a configuration file called `MaxScale.cnf` in the directory `$MAXSCALE_HOME/etc`.
+1. Location given with the --configdir=<path> command line argument
 
-2. If `MAXSCALE_HOME` is not set or the configuration file is not in the location above MaxScale will look for a file in `/etc/MaxScale.cnf`.
-
-Alternatively MaxScale can be started with the `-c` flag and the path of the MaxScale home directory tree.
+2. MaxScale will look for a configuration file called `maxscale.cnf` in the directory `/etc/maxscale.cnf`
 
 An explicit path to a configuration file can be passed by using the `-f` option to MaxScale.
 
 The configuration file itself is based on the ".ini" file format and consists of various sections that are used to build the configuration, these sections define services, servers, listeners, monitors and global settings.
+
+Please see the section about [Protocol Modules](#protocol-modules) for more details about MaxScale and the default directories where modules will be searched for.
 
 ### Global Settings
 
@@ -100,6 +100,54 @@ log_debug=1
 ```
 
 To disable the log use the value 0 and to enable it use the value 1.
+
+#### `logdir`
+
+Set the directory where the logfiles are stored. The folder needs to be both readable and writable by the user running MaxScale.
+
+```
+logdir=/tmp/
+```
+
+#### `datadir`
+
+Set the directory where the data files used by MaxScale are stored. Modules can write to this directory and for example the binlogrouter uses this folder as the default location for storing binary logs.
+
+```
+datadir=/home/user/maxscale_data/
+```
+
+#### `libdir`
+
+Set the directory where MaxScale looks for modules. The library director is the only directory that MaxScale uses when it searches for modules. If you have custom modules for MaxScale, make sure you have them in this folder.
+
+```
+libdir=/home/user/lib64/
+```
+
+#### `cachedir`
+
+Configure the directory MaxScale uses to store cached data. An example of cached data is the authentication data fetched from the backend servers. MaxScale stores this in case a connection to the backend server is not possible.
+
+```
+cachedir=/tmp/maxscale_cache/
+```
+
+#### `piddir`
+
+Configure the directory for the PID file for MaxScale. This file contains the Process ID for the running MaxScale process.
+
+```
+piddir=/tmp/maxscale_cache/
+```
+
+#### `language`
+
+Set the folder where the errmsg.sys file is located in. MaxScale will look for the errmsg.sys file installed with MaxScale from this folder.
+
+```
+language=/home/user/lang/
+```
 
 ### Service
 
@@ -540,7 +588,7 @@ Default value is `2`. Write Timeout is the timeout in seconds for each attempt t
 
 ## Protocol Modules
 
-The protocols supported by MaxScale are implemented as external modules that are loaded dynamically into the MaxScale core. These modules reside in the directory `$MAXSCALE_HOME/modules`, if the environment variable `$MAXSCALE_HOME` is not set it defaults to `/usr/local/mariadb-maxscale`. It may also be set by passing the `-c` option on the MaxScale command line.
+The protocols supported by MaxScale are implemented as external modules that are loaded dynamically into the MaxScale core. These modules reside in the directory `/usr/lib64/maxscale`. The location can be overridden with the `libdir=PATH` parameter under the `[maxscale]` section. It may also be set by passing the `-B PATH` or `--libdir=PATH` option on the MaxScale command line.
 
 ### MySQLClient
 
@@ -776,23 +824,23 @@ The configuration consists of mandatory and optional parameters.
 
 ###### Mandatory parameters
 
-`type` specifies the type of service. For **readwritesplit** module the type is `router`:
+**`type`** specifies the type of service. For **readwritesplit** module the type is `router`:
 
     type=router
 
-`service` specifies the router module to be used. For **readwritesplit** the value is `readwritesplit`:
+**`service`** specifies the router module to be used. For **readwritesplit** the value is `readwritesplit`:
 
     service=readwritesplit
 
-`servers` provides a list of servers, which must include one master and available slaves:
+**`servers`** provides a list of servers, which must include one master and available slaves:
 
     servers=server1,server2,server3
 
 **NOTE: Each server on the list must have its own section in the configuration file where it is defined.**
 
-`user` is the username the router session uses for accessing backends in order to load the content of the `mysql.user` table (and `mysql.db` and database names as well) and optionally for creating, and using `maxscale_schema.replication_heartbeat` table.
+**`user`** is the username the router session uses for accessing backends in order to load the content of the `mysql.user` table (and `mysql.db` and database names as well) and optionally for creating, and using `maxscale_schema.replication_heartbeat` table.
 
-`passwd` specifies corresponding password for the user. Syntax for user and passwd is:
+**`passwd`** specifies corresponding password for the user. Syntax for user and passwd is:
 
 ```
 user=<username>
@@ -801,18 +849,18 @@ passwd=<password>
 
 ###### Optional parameters
 
-`max_slave_connections` sets the maximum number of slaves a router session uses at any moment. Default value is `1`.
+**`max_slave_connections`** sets the maximum number of slaves a router session uses at any moment. Default value is `1`.
 
 	max_slave_connections=<max. number, or % of available slaves>
 
-`max_slave_replication_lag` specifies how many seconds a slave is allowed to be behind the master. If the lag is bigger than configured value a slave can't be used for routing.
+**`max_slave_replication_lag`** specifies how many seconds a slave is allowed to be behind the master. If the lag is bigger than configured value a slave can't be used for routing.
 
 	max_slave_replication_lag=<allowed lag in seconds>
 
 This applies to Master/Slave replication with MySQL monitor and `detect_replication_lag=1` options set.
 Please note max_slave_replication_lag must be greater than monitor interval.
 
-`router_options` may include multiple **readwritesplit**-specific options. Values are either singular or parameter-value pairs. Currently available is a single option which specifies the criteria used in slave selection both in initialization of router session and per each query. Note that due to the current monitor implementation, the value specified here should be *<twice the monitor interval>* + 1.
+**`router_options`** may include multiple **readwritesplit**-specific options. Values are either singular or parameter-value pairs. Currently available is a single option which specifies the criteria used in slave selection both in initialization of router session and per each query. Note that due to the current monitor implementation, the value specified here should be *<twice the monitor interval>* + 1.
 
 	options=slave_selection_criteria=<criteria>
 
@@ -823,7 +871,7 @@ where *<criteria>* is one of the following:
 * `LEAST_BEHIND_MASTER`, the slave with smallest replication lag
 * `LEAST_CURRENT_OPERATIONS` (default), the slave with least active operations
 
-`use_sql_variables_in` specifies where should queries, which read session variable, be routed. The syntax for `use_sql_variable_in` is:
+**`use_sql_variables_in`** specifies where should queries, which read session variable, be routed. The syntax for `use_sql_variable_in` is:
 
     use_sql_variables_in=[master|all]
 
@@ -833,13 +881,25 @@ When value all is used, queries reading session variables can be routed to any a
 
 In above-mentioned case the user-defined variable would only be updated in the master where query would be routed due to `INSERT` statement.
 
-`max_sescmd_history` sets a limit on how many session commands each session can execute before the connection is closed. The default is an unlimited number of session commands.
+**`max_sescmd_history`** sets a limit on how many session commands each session can execute before the connection is closed. The default is an unlimited number of session commands.
 
 	max_sescmd_history=1500
 
 When a limitation is set, it effectively creates a cap on the session's memory consumption. This might be useful if connection pooling is used and the sessions use large amounts of session commands.
 
-`disable_sescmd_history=true|false` disables the session command history. This way nothing is stored and if a slave server fails and a new one is taken in its stead, the session on that server will be in an inconsistent state compared to the master server. Disabling session command history will allow connection pooling without causing a constant growth in the memory consumption.
+**`disable_sescmd_history`** disables the session command history. This way nothing is stored and if a slave server fails and a new one is taken in its stead, the session on that server will be in an inconsistent state compared to the master server. Disabling session command history will allow connection pooling without causing a constant growth in the memory consumption.
+
+```
+# Disable the session command history
+disable_sescmd_history=true
+```
+
+**`disable_slave_recovery`** disables the recovery and replacement of slave servers. If this option is enabled and a connection to a slave server in use is lost, no replacement slave will be taken. This allows the safe use of session state modifying statements when the session command history is disabled. This is mostly intended to be used with the `disable_sescmd_history` option enabled.
+
+```
+# Disable the session command history
+disable_slave_recovery=true
+```
 
 An example of Read/Write Split router configuration :
 
@@ -1024,7 +1084,7 @@ Please note, those two options are not enabled by default.
 
 ### galeramon
 
-The Galeramon monitor is a simple router designed for use with MySQL Galera cluster. To execute the galeramon monitor an entry as shown below should be added to the MaxScale configuration file.
+The Galeramon monitor is a simple monitor designed for use with MySQL Galera cluster. To execute the galeramon monitor an entry as shown below should be added to the MaxScale configuration file.
 
 ```
 [Galera Monitor]
@@ -1262,7 +1322,7 @@ In addition parameters may be added to define patterns to match against to eithe
 
 The top filter is a filter module for MaxScale that monitors every SQL statement that passes through the filter. It measures the duration of that statement, the time between the statement being sent and the first result being returned. The top N times are kept, along with the SQL text itself and a list sorted on the execution times of the query is written to a file upon closure of the client session.
 
-The configuration block for the **top** filter requires the minimal filter options in its section within the `MaxScale.cnf` file, stored in `$MAXSCALE_HOME/etc/MaxScale.cnf`.
+The configuration block for the **top** filter requires the minimal filter options in its section within the `MaxScale.cnf` file, stored in `/etc/MaxScale.cnf`.
 
 ```
 [MyLogFilter]
@@ -1276,15 +1336,17 @@ In addition parameters may be added to define patterns to match against to eithe
 
 ## Encrypting Passwords
 
-Passwords stored in the MaxScale.cnf file may optionally be encrypted for added security. This is done by creation of an encryption key on installation of MaxScale. Encryption keys may be created manually by executing the maxkeys utility with the argument of the filename to store the key.
+Passwords stored in the MaxScale.cnf file may optionally be encrypted for added security. This is done by creation of an encryption key on installation of MaxScale. Encryption keys may be created manually by executing the maxkeys utility with the argument of the filename to store the key. The default location MaxScale stores the keys is `/var/cache/maxscale`.
 
-    maxkeys $MAXSCALE_HOME/etc/.secrets
+```
+maxkeys /var/cache/maxscale/.secrets
+```
 
 Changing the encryption key for MaxScale will invalidate any currently encrypted keys stored in the MaxScale.cnf file.
 
 ### Creating Encrypted Passwords
 
-Encrypted passwords are created by executing the maxpasswd command with the password you require to encrypt as an argument. The environment variable `MAXSCALE_HOME` must be set, or MaxScale must be installed in the default location before maxpasswd can be executed.
+Encrypted passwords are created by executing the maxpasswd command with the password you require to encrypt as an argument.
 
     maxpasswd MaxScalePw001
     61DD955512C39A4A8BC4BB1E5F116705
@@ -1370,7 +1432,7 @@ and short notations
 
 ## Error Reporting
 
-MaxScale is designed to be executed as a service, therefore all error reports, including configuration errors, are written to the MaxScale error log file. MaxScale will log to a set of files in the directory `$MAXSCALE_HOME/log`, the only exception to this is if the log directory is not writable, in which case a message is sent to the standard error descriptor.
+MaxScale is designed to be executed as a service, therefore all error reports, including configuration errors, are written to the MaxScale error log file. By default, MaxScale will log to a set of files in the directory `/var/log/maxscale`, the only exception to this is if the log directory is not writable, in which case a message is sent to the standard error descriptor.
 
 ### Troubleshooting
 
