@@ -1033,8 +1033,8 @@ getAllUsers(SERVICE *service, USERS *users)
 
 		} else if(rc == -1) {
 		    /** Duplicate user*/
-		    LOGIF(LE,(skygw_log_write(LT|LE,
-					     "Warning: Duplicate MySQL user found for service [%s]: %s@%s%s%s",
+		    LOGIF(LT,(skygw_log_write(LT,
+					     "Duplicate MySQL user found for service [%s]: %s@%s%s%s",
 					     service->name,
 					     row[0],row[1],havedb?" for database: ":"",
 					     havedb ?dbnm:"")));
