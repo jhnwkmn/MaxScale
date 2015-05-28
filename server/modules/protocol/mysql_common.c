@@ -1533,8 +1533,14 @@ int gw_find_mysql_user_password_sha1(char *username, uint8_t *gateway_password, 
 			/** See if ANYDB == Y */
 			if(key.resource)
 			{
+			  if(strlen(key.resource) > 0)
+			    key.resource = "";
+			  else
 			    key.resource = NULL;
-			    continue;
+
+			  memcpy(&key.ipv4, client, sizeof(struct sockaddr_in));
+			  key.netmask = 32;
+			  continue;
 			}
 
 			if (!user_password) {
