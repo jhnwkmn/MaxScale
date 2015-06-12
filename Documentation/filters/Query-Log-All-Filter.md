@@ -83,6 +83,21 @@ The  optional  user  parameter  defines  a  user  name  that  is  used  to  matc
 user=john
 ```
 
+### Logging
+
+The optional _logging_ parameter defines where the log entries should be written. The possible values are:
+
+* _per-instance_: All log entries will be written to the file defined by the _filebase_ parameter and each line will be prepended with the session identifier.
+* _per-session_: The log entries will be written to a file whose name is constructed by appending a dot and the session identifier to the string defined by the _filebase_ parameter, for instance, _/tmp/SqlQueryLog.4_.
+* _per-database_: The log entries will be written to a file whose name is constructed by appending a dot and the database name to the string defined by the _filebase_ parameter, for instance, _/tmp/SqlQueryLog.contacts_. Note that if the query involves multiple databases, then the same entry is written to all corresponding log files.
+
+The default mode is _per-session_.
+
+Note that in the _per-instance_ and _per-session_ cases, the files are overwritten when MaxScale is restarted, while in the _per-database_ they are retained.
+```
+logging=per-session
+```
+
 ## Examples
 
 ### Example 1 - Query without primary key
