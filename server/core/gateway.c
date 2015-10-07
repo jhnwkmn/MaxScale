@@ -210,7 +210,7 @@ static void sighup_handler (int i)
 }
 
 /**
- * Handler for SIGUSR1 signal. A SIGUSR1 signal will cause 
+ * Handler for SIGUSR1 signal. A SIGUSR1 signal will cause
  * maxscale to rotate all log files.
  */
 static void sigusr1_handler (int i)
@@ -226,7 +226,7 @@ static void sigusr1_handler (int i)
 
 static void sigterm_handler (int i) {
         extern void shutdown_server();
-        
+
 	LOGIF(LE, (skygw_log_write_flush(
                 LOGFILE_ERROR,
                 "MaxScale received signal SIGTERM. Exiting.")));
