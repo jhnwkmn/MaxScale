@@ -91,7 +91,7 @@ typedef struct hashtable {
 } HASHTABLE;
 
 extern HASHTABLE	*hashtable_alloc(int, int (*hashfn)(), int (*cmpfn)());
-HASHTABLE		*hashtable_alloc_flat(HASHTABLE* target, 
+HASHTABLE		*hashtable_alloc_flat(HASHTABLE* target,
 						int size,
 						int (*hashfn)(),
 						int (*cmpfn)());

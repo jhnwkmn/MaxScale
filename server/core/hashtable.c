@@ -122,7 +122,7 @@ hashtable_alloc_real(
 	int (*cmpfn)())
 {
 	HASHTABLE       *rval;
-	
+
 	if (target == NULL)
 	{
 		if ((rval = malloc(sizeof(HASHTABLE))) == NULL)
@@ -134,7 +134,7 @@ hashtable_alloc_real(
 		rval = target;
 		rval->ht_isflat = true;
 	}
-	
+
 #if defined(SS_DEBUG)
 	rval->ht_chk_top = CHK_NUM_HASHTABLE;
 	rval->ht_chk_tail = CHK_NUM_HASHTABLE;
@@ -184,7 +184,7 @@ HASHENTRIES	*entry, *ptr;
 		}
 	}
 	free(table->entries);
-	
+
 	hashtable_write_unlock(table);
 	if (!table->ht_isflat)
 	{
@@ -205,10 +205,10 @@ HASHENTRIES	*entry, *ptr;
  */
 void
 hashtable_memory_fns(
-	HASHTABLE   *table, 
-	HASHMEMORYFN kcopyfn, 
-	HASHMEMORYFN vcopyfn, 
-	HASHMEMORYFN kfreefn, 
+	HASHTABLE   *table,
+	HASHMEMORYFN kcopyfn,
+	HASHMEMORYFN vcopyfn,
+	HASHMEMORYFN kfreefn,
 	HASHMEMORYFN vfreefn)
 {
 	if (kcopyfn != NULL)
@@ -238,7 +238,7 @@ hashtable_add(HASHTABLE *table, void *key, void *value)
         if (key == NULL || value == NULL)
             return 0;
 
-        if (table->hashsize <= 0) {            
+        if (table->hashsize <= 0) {
             return 0;
         } else {
             hashkey = table->hashfn(key) % table->hashsize;
@@ -424,8 +424,8 @@ HASHENTRIES	*entries;
 	printf("\tLongest chain length:	%d\n", longest);
 }
 
-/** 
- * Produces stat output about hashtable 
+/**
+ * Produces stat output about hashtable
  *
  * Parameters:
  * @param table - <usage>
@@ -458,13 +458,13 @@ void hashtable_get_stats(
 	*nelems = 0;
 	*longest = 0;
 	*hashsize = 0;
-	
+
 	if (table != NULL)
 	{
 		ht = (HASHTABLE *)table;
 		CHK_HASHTABLE(ht);
 		hashtable_read_lock(ht);
-		
+
 		for (i = 0; i < ht->hashsize; i++)
 		{
 			j = 0;
@@ -697,7 +697,7 @@ void		*key, *value;
         {
             write(fd, &rval, sizeof(rval));
         }
-	
+
 	close(fd);
         hashtable_iterator_free(iter);
 	return rval;
