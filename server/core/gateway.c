@@ -1809,24 +1809,24 @@ static void log_flush_cb(
                                    "Finished MaxScale log flusher.")));
 }
 
-/** 
+/**
  * Unlink pid file, called at program exit
  */
 static void unlink_pidfile(void)
 {
 	if (strlen(pidfile)) {
-		if (unlink(pidfile)) 
+		if (unlink(pidfile))
 		{
-			fprintf(stderr, 
-				"MaxScale failed to remove pidfile %s: error %d, %s\n", 
-				pidfile, 
-				errno, 
+			fprintf(stderr,
+				"MaxScale failed to remove pidfile %s: error %d, %s\n",
+				pidfile,
+				errno,
 				strerror(errno));
 		}
 	}
 }
 
-/** 
+/**
  * Write process pid into pidfile anc close it
  * Parameters:
  * @param home_dir The MaxScale home dir
@@ -1984,7 +1984,7 @@ static int set_user(char* user)
 	 user,errno,errno == 0 ? "User not found" : strerror(errno));
 	return -1;
     }
-    
+
     rval = setgid(pwname->pw_gid);
     if(rval != 0)
     {
