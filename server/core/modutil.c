@@ -55,12 +55,12 @@ static void modutil_reply_routing_error(
 int
 modutil_is_SQL(GWBUF *buf)
 {
-unsigned char	*ptr;
+    unsigned char *ptr;
 
-	if (GWBUF_LENGTH(buf) < 5)
-		return 0;
-	ptr = GWBUF_DATA(buf);
-	return ptr[4] == 0x03;		// COM_QUERY
+    if (GWBUF_LENGTH(buf) < 5)
+        return 0;
+    ptr = GWBUF_DATA(buf);
+    return ptr[4] == 0x03;		// COM_QUERY
 }
 
 /**
@@ -72,12 +72,12 @@ unsigned char	*ptr;
 int
 modutil_is_SQL_prepare(GWBUF *buf)
 {
-unsigned char	*ptr;
+    unsigned char *ptr;
 
-	if (GWBUF_LENGTH(buf) < 5)
-		return 0;
-	ptr = GWBUF_DATA(buf);
-	return ptr[4] == 0x16 ;		// COM_STMT_PREPARE
+    if (GWBUF_LENGTH(buf) < 5)
+        return 0;
+    ptr = GWBUF_DATA(buf);
+    return ptr[4] == 0x16 ;		// COM_STMT_PREPARE
 }
 
 /**
@@ -101,7 +101,7 @@ unsigned char	*ptr;
 int
 modutil_extract_SQL(GWBUF *buf, char **sql, int *length)
 {
-unsigned char	*ptr;
+    unsigned char *ptr;
 
 	if (!modutil_is_SQL(buf))
 		return 0;

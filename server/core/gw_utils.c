@@ -3,18 +3,18 @@
  * software: you can redistribute it and/or modify it under the terms of the
  * GNU General Public License as published by the Free Software Foundation,
  * version 2.
- * 
+ *
  * This program is distributed in the hope that it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  * FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  * details.
- * 
+ *
  * You should have received a copy of the GNU General Public License along with
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- * 
+ *
  * Copyright MariaDB Corporation Ab 2013-2014
- * 
+ *
  */
 
 /**
@@ -117,7 +117,7 @@ setipaddress(struct in_addr *a, char *p) {
         spinlock_acquire(&tmplock);
         h = gethostbyname(p);
         spinlock_release(&tmplock);
-        
+
 	if (h == NULL) {
 		if ((a->s_addr = inet_addr(p)) == -1) {
 			LOGIF(LE, (skygw_log_write_flush(

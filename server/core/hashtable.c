@@ -68,9 +68,9 @@ static	void hashtable_read_lock(HASHTABLE *table);
 static	void hashtable_read_unlock(HASHTABLE *table);
 static	void hashtable_write_lock(HASHTABLE *table);
 static	void hashtable_write_unlock(HASHTABLE *table);
-static HASHTABLE *hashtable_alloc_real(HASHTABLE* target, 
-					int size, 
-					int (*hashfn)(), 
+static HASHTABLE *hashtable_alloc_real(HASHTABLE* target,
+					int size,
+					int (*hashfn)(),
 					int (*cmpfn)());
 
 /**
@@ -106,9 +106,9 @@ hashtable_alloc(int size, int (*hashfn)(), int (*cmpfn)())
 }
 
 HASHTABLE* hashtable_alloc_flat(
-	HASHTABLE* target, 
-	int size, 
-	int (*hashfn)(), 
+	HASHTABLE* target,
+	int size,
+	int (*hashfn)(),
 	int (*cmpfn)())
 {
 	return hashtable_alloc_real(target, size, hashfn, cmpfn);
@@ -116,9 +116,9 @@ HASHTABLE* hashtable_alloc_flat(
 
 static HASHTABLE *
 hashtable_alloc_real(
-	HASHTABLE* target, 
-	int        size, 
-	int (*hashfn)(), 
+	HASHTABLE* target,
+	int        size,
+	int (*hashfn)(),
 	int (*cmpfn)())
 {
 	HASHTABLE       *rval;
