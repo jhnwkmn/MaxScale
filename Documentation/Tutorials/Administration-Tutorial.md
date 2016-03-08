@@ -1,12 +1,15 @@
 # MaxScale Administration Tutorial
 
+Last updated 24th June 2015
+
 ## Common Administration Tasks
 
 The purpose of this tutorial is to introduce the MaxScale Administrator to a few of the common administration tasks that need to be performed with MaxScale. It is not intended as a reference to all the tasks that may be performed, more this is aimed as an introduction for administrators who are new to MaxScale.
 
 [Starting MaxScale](#starting)   
 [Stopping MaxScale](#stopping)   
-[Checking The Status Of The MaxScale Services](#checking)   
+[Checking The Status Of The MaxScale Services](#checking)  
+[Persistent Connections](#persistent)  
 [What Clients Are Connected To MaxScale](#clients)   
 [Rotating Log Files](#rotating)   
 [Taking A Database Server Out Of Use](#outofuse)   
@@ -24,24 +27,13 @@ or
 ```
 It is also possible to start MaxScale by executing the maxscale command itself. Running the executable /usr/bin/maxscale will result in MaxScale running as a daemon process, unattached to the terminal in which it was started and using configuration files that it finds in the /etc directory.
 
-Options may be passed to the MaxScale binary that alter this default behavior, this options are documented in the table below.
+Options may be passed to the MaxScale binary that alter this default behavior. For a full list of all parameters, refer to the MaxScale help output by executing `maxscale --help`.
 
-Switch|Long Option|Description
-------|-----------|-----------
-`-d`|`--nodaemon`|enable running in terminal process (default:disabled)
-`-f FILE`|`--config=FILE`|relative or absolute pathname of MaxScale configuration file (default:/etc/maxscale.cnf)
-`-l[file shm]`|`--log=[file shm]`|log to file or shared memory (default: shm)
-`-L PATH`|`--logdir=PATH`|path to log file directory (default: /var/log/maxscale)
-`-D PATH`|`--datadir=PATH`|path to data directory, stored embedded mysql tables (default: /var/cache/maxscale)
-`-C PATH`|`--configdir=PATH`|path to configuration file directory (default: /etc/)
-`-B PATH`|`--libdir=PATH`|path to module directory (default: /usr/lib64/maxscale)
-`-A PATH`|`--cachedir=PATH`|path to cache directory (default: /var/cache/maxscale)
-`P PATH`|`--piddir=PATH`|PID file directory
-`-U USER`|`--user=USER`|run MaxScale as another user. The user ID and group ID of this user are used to run MaxScale.
-`-s [yes no]`|`--syslog=[yes no]`|log messages to syslog (default:yes)
-`-S [yes no]`|`--maxscalelog=[yes no]`|log messages to MaxScale log (default: yes)
-`-v`|`--version`|print version info and exit
-`-?`|`--help`|show this help
+Additional command line arguments can be passed to MaxScale with a configuration file placed at `/etc/sysconfig/maxscale` on RPM installations and `/etc/default/maxscale` file on DEB installations. Set the arguments in a variable called `MAXSCALE_OPTIONS` and remember to surround the arguments with quotes. The file should only contain environment variable declarations.
+
+```
+MAXSCALE_OPTIONS="--logdir=/home/maxscale/logs --piddir=/tmp --syslog=no"
+```
 
 <a name="stopping"></a> 
 ### Stopping MaxScale
@@ -93,6 +85,37 @@ It is possible to use the maxadmin command to obtain statistics regarding the se
 ```
 
 It should be noted that network listeners count as a user of the service, therefore there will always be one user per network port in which the service listens. More detail can be obtained by use of the "show service" command which is passed a service name.
+
+<a name="persistent"></a>
+### Persistent Connections
+
+Where the clients who are accessing a database system through MaxScale make frequent
+short connections, there may be a benefit from invoking the MaxScale Persistent
+Connection feature.  This is controlled by two configuration values that are specified
+per server in the relevant server section of the configuration file.  The configuration
+options are `persistpoolmax` and `persistmaxtime`.
+
+Normally, when a client connection is terminated, all the related back end database
+connections are also terminated.  If the `persistpoolmax` options is set to a non-zero
+integer, then up to that number of connections will be kept in a pool for that 
+server. When a new connection is requested by the system to meet a new client request, 
+then a connection from the pool will be used if possible.
+
+The connection will only be taken from the pool if it has been there for no more
+than `persistmaxtime` seconds.  It was also be discarded if it has been disconnected
+by the back end server. Connections will be selected that match the user name and
+protocol for the new request.
+
+**Please note** that because persistent connections have previously been in use, they
+may give a different environment from a fresh connection. For example, if the 
+previous use of the connection issued "use mydatabase" then this setting will be
+carried over into the reuse of the same connection. For many applications this will
+not be noticeable, since each request will assume that nothing has been set and
+will issue fresh requests such as "use" to establish the desired configuration.  In 
+exceptional cases this feature could be a problem.
+
+It is possible to have pools for as many servers as you wish, with configuration
+values in each server section.
 
 <a name="clients"></a> 
 ### What Clients Are Connected To MaxScale
@@ -181,5 +204,5 @@ To bring the server back into service use the "clear server" command to clear th
 	MaxScale> clear server dbserver3 maintenance
 	MaxScale> 
 ```
-Note that maintenance mode is not persistent, if MaxScale restarts when a node is in maintenance mode a new instance of MaxScale will not honour this mode. If multiple MaxScale instances are configured to use the node them maintenance mode must be set within each MaxScale instance. However if multiple services within one MaxScale instance are using the server then you only need set the maintenance mode once on the server for all services to take note of the mode change.
+Note that maintenance mode is not persistent, if MaxScale restarts when a node is in maintenance mode a new instance of MaxScale will not honor this mode. If multiple MaxScale instances are configured to use the node them maintenance mode must be set within each MaxScale instance. However if multiple services within one MaxScale instance are using the server then you only need set the maintenance mode once on the server for all services to take note of the mode change.
 

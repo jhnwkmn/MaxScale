@@ -27,6 +27,13 @@
  * @endverbatim
  */
 
+// To ensure that ss_info_assert asserts also when builing in non-debug mode.
+#if !defined(SS_DEBUG)
+#define SS_DEBUG
+#endif
+#if defined(NDEBUG)
+#undef NDEBUG
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -104,7 +111,7 @@ static int
 test2()
 {
 SPINLOCK	lck;
-void		*handle;
+THREAD		handle;
 struct timespec sleeptime;
 
     sleeptime.tv_sec = 10;
@@ -113,7 +120,7 @@ struct timespec sleeptime;
 	acquire_time = 0;
 	spinlock_init(&lck);
 	spinlock_acquire(&lck);
-	handle = thread_start(test2_helper, (void *)&lck);
+	thread_start(&handle, test2_helper, (void *)&lck);
 	nanosleep(&sleeptime, NULL);
 	spinlock_release(&lck);
 	thread_wait(handle);
@@ -151,11 +158,14 @@ test3_helper(void *data)
 // SPINLOCK   *lck = (SPINLOCK *)data;
 int         i;
 int         n = *(int *)data;
-struct timespec sleeptime;
 time_t          rawtime;
+
+#if defined(ADD_SOME_NANOSLEEP)
+struct timespec sleeptime;
 
     sleeptime.tv_sec = 0;
     sleeptime.tv_nsec = 1;
+#endif
 
     while (1) {
         if (spinlock_acquire_nowait(&lck)) {
@@ -185,7 +195,9 @@ time_t          rawtime;
         active = 0;
         spinlock_release(&lck);
         for (i=0; i<(4*PROCESS_LOOP); i++);
-        // nanosleep(&sleeptime, NULL);
+#if defined(ADD_SOME_NANOSLEEP)
+        nanosleep(&sleeptime, NULL);
+#endif
     }
     spinlock_release(&lck);
 }
@@ -194,15 +206,10 @@ static int
 test3()
 {
 // SPINLOCK	lck;
-void		*handle[THREADS];
+THREAD          handle[THREADS];
 int             i;
 int             tnum[THREADS];
 time_t          rawtime;
-
-struct timespec sleeptime;
-
-    sleeptime.tv_sec = 20;
-    sleeptime.tv_nsec = NANOTIME;
 
     times_run = 0;
     active = 0;
@@ -213,7 +220,7 @@ struct timespec sleeptime;
     for (i = 0; i<THREADS; i++) {
         threadrun[i] = 0;
         tnum[i] = i;
-        handle[i] = thread_start(test3_helper, &tnum[i]);
+        thread_start(&handle[i], test3_helper, &tnum[i]);
     }
     for (i = 0; i<THREADS; i++) {
         fprintf(stderr, "spinlock_test 3 thread %d ran %d times, no wait %d times before waits.\n", i, threadrun[i], nowait[i]);

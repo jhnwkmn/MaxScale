@@ -242,18 +242,19 @@ typedef struct backend_ref_st {
 #endif
 } backend_ref_t;
 
-
-typedef struct rwsplit_config_st {
-        int               rw_max_slave_conn_percent;
-        int               rw_max_slave_conn_count;
-        select_criteria_t rw_slave_select_criteria;
-        int               rw_max_slave_replication_lag;
-	target_t          rw_use_sql_variables_in;
-        int               rw_max_sescmd_history_size;
-        bool disable_sescmd_hist;
-        bool disable_slave_recovery;
+typedef struct rwsplit_config_st
+{
+    int rw_max_slave_conn_percent;
+    int rw_max_slave_conn_count;
+    select_criteria_t rw_slave_select_criteria;
+    int rw_max_slave_replication_lag;
+    target_t rw_use_sql_variables_in;
+    int rw_max_sescmd_history_size;
+    bool rw_disable_sescmd_hist;
+    bool rw_master_reads; /*< Use master for reads */
+    bool rw_strict_multi_stmt; /*< Force non-multistatement queries to be routed
+                                * to the master after a multistatement query. */
 } rwsplit_config_t;
-     
 
 #if defined(PREP_STMT_CACHING)
 
@@ -291,11 +292,15 @@ struct router_client_session {
         rwsplit_config_t rses_config;    /*< copied config info from router instance */
         int              rses_nbackends;
         int              rses_nsescmd;  /*< Number of executed session commands */
-        int              rses_capabilities; /*< input type, for example */
         bool             rses_autocommit_enabled;
         bool             rses_transaction_active;
+        bool             rses_load_active; /*< If LOAD DATA LOCAL INFILE is
+                                            * being currently executed */
+        bool             have_tmp_tables;
+        uint64_t         rses_load_data_sent; /*< How much data has been sent */
         DCB* client_dcb;
         int             pos_generator;
+        backend_ref_t          *forced_node; /*< Current server where all queries should be sent */
 #if defined(PREP_STMT_CACHING)
         HASHTABLE*       rses_prep_stmt[2];
 #endif

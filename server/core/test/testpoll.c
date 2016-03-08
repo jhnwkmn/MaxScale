@@ -27,12 +27,20 @@
  * @endverbatim
  */
 
+// To ensure that ss_info_assert asserts also when builing in non-debug mode.
+#if !defined(SS_DEBUG)
+#define SS_DEBUG
+#endif
+#if defined(NDEBUG)
+#undef NDEBUG
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-#include <poll.h>
+#include <maxscale/poll.h>
 #include <dcb.h>
+#include <test_utils.h>
 
 /**
  * test1	Allocate a service and do lots of other things
@@ -49,6 +57,7 @@ int     result;
         /* Poll tests */  
         ss_dfprintf(stderr,
                     "testpoll : Initialise the polling system."); 
+        init_test_env(NULL);
         poll_init();
         ss_dfprintf(stderr, "\t..done\nAdd a DCB");
         dcb = dcb_alloc(DCB_ROLE_REQUEST_HANDLER);
@@ -61,7 +70,8 @@ int     result;
         dcb->fd = socket(AF_UNIX, SOCK_STREAM, 0);
 
         if(dcb->fd < 0){
-			ss_dfprintf(stderr, "\nError on function call: socket() returned %d: %s\n",errno,strerror(errno));
+                        char errbuf[STRERROR_BUFLEN];
+			ss_dfprintf(stderr, "\nError on function call: socket() returned %d: %s\n",errno,strerror_r(errno,errbuf,sizeof(errbuf)));
 				    return 1;
 		}
 
@@ -85,7 +95,7 @@ int     result;
         sleep(10);
         poll_shutdown();
         ss_dfprintf(stderr, "\t..done\nTidy up.");
-        dcb_free(dcb);
+        dcb_close(dcb);
         ss_dfprintf(stderr, "\t..done\n");
 		
 	return 0;

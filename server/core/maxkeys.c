@@ -22,65 +22,42 @@
  * @verbatim
  * Revision History
  *
- * Date		Who		Description
- * 24/07/13	Mark Riddoch	Initial implementation
+ * Date         Who             Description
+ * 24/07/13     Mark Riddoch    Initial implementation
  *
  * @endverbatim
  */
-#include	<stdio.h>
-#include	<secrets.h>
+#include <stdio.h>
+#include <secrets.h>
 #include <skygw_utils.h>
 #include <log_manager.h>
 #include <gwdirs.h>
+
 int main(int argc, char **argv)
 {
-    int arg_count = 6;
-    char *home;
-    char** arg_vector;
+    const char *keyfile;
     int rval = 0;
 
-	if (argc != 2)
-	{
-		fprintf(stderr, "Usage: %s <filename>\n", argv[0]);
-		return 1;
-	}
+    if (argc < 2)
+    {
+        keyfile = get_datadir();
+        fprintf(stderr, "Generating .secrets file in %s ...\n", keyfile);
+    }
+    else
+    {
+        keyfile = argv[1];
+    }
 
-	arg_vector = malloc(sizeof(char*)*(arg_count + 1));
+    mxs_log_init(NULL, NULL, MXS_LOG_TARGET_DEFAULT);
 
-	if(arg_vector == NULL)
-	{
-	    fprintf(stderr,"Error: Memory allocation failed.\n");
-	    return 1;
-	}
+    if (secrets_writeKeys(keyfile))
+    {
+        fprintf(stderr, "Failed to encode the password\n");
+        rval = 1;
+    }
 
-	if(access("/var/log/maxscale/maxkeys/",F_OK) != 0)
-	{
-            if(mkdir("/var/log/maxscale/maxkeys/",0777) == -1)
-            {
-		if(errno != EEXIST)
-		{
-		    fprintf(stderr,"Error: %d - %s",errno,strerror(errno));
-		    return 1;
-		}
-            }
-	}
-	arg_vector[0] = strdup("logmanager");
-	arg_vector[1] = strdup("-j");
-	arg_vector[2] = strdup("/var/log/maxscale/maxkeys");
-	arg_vector[3] = NULL;
-	skygw_logmanager_init(arg_count,arg_vector);
-	free(arg_vector[2]);
-	free(arg_vector);
-	
-
-	if (secrets_writeKeys(argv[1]))
-	{
-		fprintf(stderr, "Failed to encode the password\n");
-		rval = 1;
-	}
-
-	skygw_log_sync_all();
-	skygw_logmanager_done();
+    mxs_log_flush_sync();
+    mxs_log_finish();
 
     return rval;
 }

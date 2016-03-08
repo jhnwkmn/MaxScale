@@ -55,7 +55,7 @@
 #define GW_CLIENT_SO_SNDBUF  (128 * 1024)
 #define GW_CLIENT_SO_RCVBUF  (128 * 1024)
 
-#define GW_NOINTR_CALL(A)	do { errno = 0; A; } while (errno == EINTR)
+#define GW_NOINTR_CALL(A)       do { errno = 0; A; } while (errno == EINTR)
 #define GW_MYSQL_LOOP_TIMEOUT 300000000
 #define GW_MYSQL_READ 0
 #define GW_MYSQL_WRITE 1
@@ -74,7 +74,7 @@
 
 #include "dcb.h"
 
-void gw_daemonize(void);
+bool gw_daemonize(void);
 int  do_read_dcb(DCB *dcb);
 void MySQLListener(int epfd, char *config_bind);
 int  MySQLAccept(DCB *listener);
@@ -83,9 +83,10 @@ int  do_read_dcb(DCB *dcb);
 int  do_read_10(DCB *dcb, uint8_t *buffer);
 int  MySQLWrite(DCB *dcb, GWBUF *queue);
 int  setnonblocking(int fd);
-int  gw_write(DCB *dcb, const void *buf, size_t nbytes);
 int  gw_getsockerrno(int fd);
 int  parse_bindconfig(char *, unsigned short, struct sockaddr_in *);
 int setipaddress(struct in_addr *, char *);
 char* get_libdir();
+long get_processor_count();
+void clean_up_pathname(char *path);
 #endif

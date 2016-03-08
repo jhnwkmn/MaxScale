@@ -46,12 +46,8 @@ MODULE_INFO info = {
 };
 
 
-/** Defined in log_manager.cc */
-extern int lm_enabled_logfiles_bitmask;
-extern size_t log_ses_count[];
-extern __thread log_info_t tls_log_info;
 /**
- * @file shardrouter.c	
+ * @file shardrouter.c
  *
  * This is the sharding router that uses MaxScale's services to abstract
  * the actual implementation of the backend database. Queries are routed based on
@@ -63,6 +59,7 @@ extern __thread log_info_t tls_log_info;
  *
  * Date		Who			Description
  * 20/01/2015	Markus Mäkelä/Vilho Raatikka		Initial implementation
+ * 09/09/2015   Martin Brampton         Modify error handler
  *
  * @endverbatim
  */
@@ -115,11 +112,11 @@ static int router_get_servercount(ROUTER_INSTANCE* router);
 
 
 static route_target_t get_shard_route_target(
-                                             skygw_query_type_t qtype,
+                                             qc_query_type_t qtype,
                                              bool trx_active,
                                              HINT* hint);
 
-static uint8_t getCapabilities(ROUTER* inst, void* router_session);
+static int getCapabilities();
 
 void subsvc_clear_state(SUBSERVICE* svc,subsvc_state_t state);
 void subsvc_set_state(SUBSERVICE* svc,subsvc_state_t state);
@@ -200,7 +197,7 @@ static bool route_session_write(
                                 GWBUF* querybuf,
                                 ROUTER_INSTANCE* inst,
                                 unsigned char packet_type,
-                                skygw_query_type_t qtype);
+                                qc_query_type_t qtype);
 
 static void refreshInstance(
                             ROUTER_INSTANCE* router,
@@ -319,7 +316,7 @@ parse_mapping_response(ROUTER_CLIENT_SES* rses, char* target, GWBUF* buf)
    if(PTR_IS_RESULTSET(((unsigned char*)buf->start)) &&
       modutil_count_signal_packets(buf,0,0,&more) == 2)
    {
-       ptr = (char*)buf->start;
+       ptr = (unsigned char*)buf->start;
 
        if(ptr[5] != 1)
        {
@@ -346,7 +343,7 @@ parse_mapping_response(ROUTER_CLIENT_SES* rses, char* target, GWBUF* buf)
 	   {
 	       if(hashtable_add(rses->dbhash,data,target))
 	       {
-		   skygw_log_write(LOGFILE_TRACE,"shardrouter: <%s, %s>",target,data);
+		   MXS_INFO("shardrouter: <%s, %s>",target,data);
 	       }
 	       free(data);
 	   }
@@ -367,13 +364,13 @@ parse_mapping_response(ROUTER_CLIENT_SES* rses, char* target, GWBUF* buf)
  */
 bool subsvc_is_valid(SUBSERVICE* sub)
 {
-    
-    if(sub->session == NULL || 
+
+    if(sub->session == NULL ||
        sub->service->router == NULL)
     {
         return false;
     }
-    
+
     spinlock_acquire(&sub->session->ses_lock);
     session_state_t ses_state = sub->session->state;
     spinlock_release(&sub->session->ses_lock);
@@ -423,7 +420,7 @@ gen_subsvc_dblist(ROUTER_INSTANCE* inst, ROUTER_CLIENT_SES* session)
         if(SUBSVC_IS_OK(session->subservice[i]))
         {
             clone = gwbuf_clone(buffer);
-            
+
             rval |= !SESSION_ROUTE_QUERY(session->subservice[i]->session,clone);
             subsvc_set_state(session->subservice[i],SUBSVC_WAITING_RESULT|SUBSVC_QUERY_ACTIVE);
         }
@@ -441,7 +438,7 @@ gen_subsvc_dblist(ROUTER_INSTANCE* inst, ROUTER_CLIENT_SES* session)
  * @return Name of the backend or NULL if the query contains no known databases.
  */
 char*
-get_shard_target_name(ROUTER_INSTANCE* router, ROUTER_CLIENT_SES* client, GWBUF* buffer, skygw_query_type_t qtype)
+get_shard_target_name(ROUTER_INSTANCE* router, ROUTER_CLIENT_SES* client, GWBUF* buffer, qc_query_type_t qtype)
 {
     HASHTABLE* ht = client->dbhash;
     int sz = 0, i, j;
@@ -450,12 +447,7 @@ get_shard_target_name(ROUTER_INSTANCE* router, ROUTER_CLIENT_SES* client, GWBUF*
     char *query = NULL,*tmp = NULL;
     bool has_dbs = false; /**If the query targets any database other than the current one*/
 
-    if(!query_is_parsed(buffer))
-    {
-        parse_query(buffer);
-    }
-
-    dbnms = skygw_get_database_names(buffer, &sz);
+    dbnms = qc_get_database_names(buffer, &sz);
 
     if(sz > 0)
     {
@@ -471,7 +463,7 @@ get_shard_target_name(ROUTER_INSTANCE* router, ROUTER_CLIENT_SES* client, GWBUF*
                 }
                 else
                 {
-                    skygw_log_write(LOGFILE_TRACE,"shardrouter: Query targets database '%s' on server '%s",dbnms[i],rval);
+                    MXS_INFO("shardrouter: Query targets database '%s' on server '%s",dbnms[i],rval);
 		    has_dbs = true;
                 }
             }
@@ -485,29 +477,29 @@ get_shard_target_name(ROUTER_INSTANCE* router, ROUTER_CLIENT_SES* client, GWBUF*
         query = modutil_get_SQL(buffer);
         if((tmp = strcasestr(query,"from")))
         {
-            char* tok = strtok(tmp, " ;");
-            tok = strtok(NULL," ;");
+            char *saved, *tok = strtok_r(tmp, " ;", &saved);
+            tok = strtok_r(NULL, " ;", &saved);
             ss_dassert(tok != NULL);
             tmp = (char*) hashtable_fetch(ht, tok);
             if(tmp)
-                skygw_log_write(LOGFILE_TRACE,"shardrouter: SHOW TABLES with specific database '%s' on server '%s'", tok, tmp);
+                MXS_INFO("shardrouter: SHOW TABLES with specific database '%s' on server '%s'", tok, tmp);
         }
         free(query);
-        
+
         if(tmp == NULL)
         {
             rval = (char*) hashtable_fetch(ht, client->rses_mysql_session->db);
-            skygw_log_write(LOGFILE_TRACE,"shardrouter: SHOW TABLES query, current database '%s' on server '%s'",
-                            client->rses_mysql_session->db,rval);
+            MXS_INFO("shardrouter: SHOW TABLES query, current database '%s' on server '%s'",
+                     client->rses_mysql_session->db,rval);
         }
         else
         {
-            rval = tmp;            
+            rval = tmp;
             has_dbs = true;
         }
     }
-    
-    
+
+
     if(buffer->hint && buffer->hint->type == HINT_ROUTE_TO_NAMED_SERVER)
     {
         for(i = 0; i < client->n_subservice; i++)
@@ -519,15 +511,15 @@ get_shard_target_name(ROUTER_INSTANCE* router, ROUTER_CLIENT_SES* client, GWBUF*
                 if(strcmp(srvrf->server->unique_name,buffer->hint->data) == 0)
                 {
                     rval = srvrf->server->unique_name;
-                    skygw_log_write(LOGFILE_TRACE,"shardrouter: Routing hint found (%s)",rval);
-                    
+                    MXS_INFO("shardrouter: Routing hint found (%s)",rval);
+
                 }
                 srvrf = srvrf->next;
             }
         }
     }
-    
-    
+
+
     if(rval == NULL && !has_dbs && client->rses_mysql_session->db[0] != '\0')
     {
         /**
@@ -538,49 +530,11 @@ get_shard_target_name(ROUTER_INSTANCE* router, ROUTER_CLIENT_SES* client, GWBUF*
         rval = (char*) hashtable_fetch(ht, client->rses_mysql_session->db);
 	if(rval)
 	{
-	    skygw_log_write(LOGFILE_TRACE,"shardrouter: Using active database '%s'",client->rses_mysql_session->db);
+	    MXS_INFO("shardrouter: Using active database '%s'",client->rses_mysql_session->db);
 	}
     }
-   
+
     return rval;
-}
-
-char**
-tokenize_string(char* str)
-{
-    char *tok;
-    char **list = NULL;
-    int sz = 2, count = 0;
-
-    tok = strtok(str, ", ");
-
-    if(tok == NULL)
-        return NULL;
-
-    list = (char**) malloc(sizeof(char*)*(sz));
-
-    while(tok)
-    {
-        if(count + 1 >= sz)
-        {
-            char** tmp = realloc(list, sizeof(char*)*(sz * 2));
-            if(tmp == NULL)
-            {
-                LOGIF(LE, (skygw_log_write_flush(
-                                                 LOGFILE_ERROR,
-                                                 "Error : realloc returned NULL: %s.", strerror(errno))));
-                free(list);
-                return NULL;
-            }
-            list = tmp;
-            sz *= 2;
-        }
-        list[count] = strdup(tok);
-        count++;
-        tok = strtok(NULL, ", ");
-    }
-    list[count] = NULL;
-    return list;
 }
 
 /**
@@ -635,9 +589,9 @@ filterReply(FILTER* instance, void *session, GWBUF *reply)
 		if(!logged)
 		{
 /*
-                    skygw_log_write(LOGFILE_DEBUG,"schemarouter: Still waiting for reply to SHOW DATABASES from %s for session %p",
-				    bkrf[i].bref_backend->backend_server->unique_name,
-				    rses->rses_client_dcb->session);
+                    MXS_DEBUG("schemarouter: Still waiting for reply to SHOW DATABASES from %s for session %p",
+                              bkrf[i].bref_backend->backend_server->unique_name,
+                              rses->rses_client_dcb->session);
 */
                     logged = true;
 		}
@@ -661,8 +615,8 @@ filterReply(FILTER* instance, void *session, GWBUF *reply)
 		if((target = hashtable_fetch(rses->dbhash,
 					 rses->connect_db)) == NULL)
 		{
-		    skygw_log_write_flush(LOGFILE_TRACE,"schemarouter: Connecting to a non-existent database '%s'",
-				     rses->connect_db);
+		    MXS_INFO("schemarouter: Connecting to a non-existent database '%s'",
+                             rses->connect_db);
 		    rses->rses_closed = true;
 		    if(rses->queue)
 		    {
@@ -683,7 +637,7 @@ filterReply(FILTER* instance, void *session, GWBUF *reply)
 		buffer = gwbuf_alloc(qlen + 5);
 		if(buffer == NULL)
 		{
-		    skygw_log_write_flush(LOGFILE_ERROR,"Error : Buffer allocation failed.");
+		    MXS_ERROR("Buffer allocation failed.");
 		    rses->rses_closed = true;
 		    if(rses->queue)
 			gwbuf_free(rses->queue);
@@ -708,15 +662,14 @@ filterReply(FILTER* instance, void *session, GWBUF *reply)
 		rses->queue = rses->queue->next;
 		tmp->next = NULL;
 		char* querystr = modutil_get_SQL(tmp);
-		skygw_log_write(LOGFILE_DEBUG,"schemarouter: Sending queued buffer for session %p: %s",
-			 rses->rses_client_dcb->session,
-			 querystr);
+		MXS_DEBUG("schemarouter: Sending queued buffer for session %p: %s",
+                          rses->rses_client_dcb->session,
+                          querystr);
 		poll_add_epollin_event_to_dcb(rses->routedcb,tmp);
 		free(querystr);
 
 	    }
-	    skygw_log_write_flush(LOGFILE_DEBUG,"session [%p] database map finished.",
-			     rses);
+	    MXS_DEBUG("session [%p] database map finished.", rses);
 	}
 
 	goto retblock;
@@ -728,9 +681,9 @@ filterReply(FILTER* instance, void *session, GWBUF *reply)
 	rses->queue = rses->queue->next;
 	tmp->next = NULL;
 	char* querystr = modutil_get_SQL(tmp);
-	skygw_log_write(LOGFILE_DEBUG,"schemarouter: Sending queued buffer for session %p: %s",
-		 rses->rses_client_dcb->session,
-		 querystr);
+	MXS_DEBUG("schemarouter: Sending queued buffer for session %p: %s",
+                  rses->rses_client_dcb->session,
+                  querystr);
 	poll_add_epollin_event_to_dcb(rses->routedcb,tmp);
 	free(querystr);
 	tmp = NULL;
@@ -738,9 +691,9 @@ filterReply(FILTER* instance, void *session, GWBUF *reply)
 
     if(rses->init & INIT_USE_DB)
     {
-	skygw_log_write(LOGFILE_DEBUG,"schemarouter: Reply to USE '%s' received for session %p",
-		 rses->connect_db,
-		 rses->rses_client_dcb->session);
+	MXS_DEBUG("schemarouter: Reply to USE '%s' received for session %p",
+                  rses->connect_db,
+                  rses->rses_client_dcb->session);
 	rses->init &= ~INIT_USE_DB;
 	strcpy(rses->rses_mysql_session->db,rses->connect_db);
 	ss_dassert(rses->init == INIT_READY);
@@ -777,7 +730,7 @@ filterReply(FILTER* instance, void *session, GWBUF *reply)
 
 /**
  * This function reads the DCB's readqueue and sends it as a reply to the session
- * who owns the DCB. 
+ * who owns the DCB.
  * @param dcb The dummy DCB
  * @return 1 on success, 0 on failure
  */
@@ -807,7 +760,7 @@ int fakeQuery(DCB* dcb)
         GWBUF* tmp = dcb->dcb_readqueue;
         void* rinst = dcb->session->service->router_instance;
         void *rses = dcb->session->router_session;
-        
+
         dcb->dcb_readqueue = NULL;
         return dcb->session->service->router->routeQuery(rinst,rses,tmp);
     }
@@ -832,9 +785,7 @@ version()
 void
 ModuleInit()
 {
-    LOGIF(LM, (skygw_log_write_flush(
-                                     LOGFILE_MESSAGE,
-                                     "Initializing statemend-based read/write split router module.")));
+    MXS_NOTICE("Initializing statemend-based read/write split router module.");
     spinlock_init(&instlock);
     instances = NULL;
 }
@@ -890,8 +841,8 @@ refreshInstance(
         }
             /*else if (paramtype == STRING_TYPE)
                             {
-                                    if (strncmp(param->name, 
-                                                            "ignore_databases", 
+                                    if (strncmp(param->name,
+                                                            "ignore_databases",
                                                             MAX_PARAM_LEN) == 0)
                                     {
                                         router->ignore_list = tokenize_string(param->qfd.valstr);
@@ -911,7 +862,7 @@ refreshInstance(
 /**
  * Create an instance of shardrouter statement router within the MaxScale.
  *
- * 
+ *
  * @param service	The service this router is being create for
  * @param options	The options for this query router
  *
@@ -939,8 +890,8 @@ createInstance(SERVICE *service, char **options)
 
     if(conf == NULL)
     {
-        skygw_log_write(LOGFILE_ERROR, "Error : no 'subservices' confguration parameter found. "
-                        " Expected a list of service names.");
+        MXS_ERROR("No 'subservices' confguration parameter found. "
+                  " Expected a list of service names.");
         free(router);
         return NULL;
     }
@@ -952,7 +903,7 @@ createInstance(SERVICE *service, char **options)
     {
 	free(router);
 	free(services);
-	skygw_log_write(LOGFILE_ERROR,"Error: Memory allocation failed.");
+	MXS_ERROR("Memory allocation failed.");
 	return NULL;
     }
 
@@ -967,10 +918,10 @@ createInstance(SERVICE *service, char **options)
             temp = realloc(res_svc, sizeof(SERVICE*)*(sz * 2));
             if(temp == NULL)
             {
-                skygw_log_write(LOGFILE_ERROR, "Error : Memory reallocation failed.");
-                LOGIF(LD,(skygw_log_write(LOGFILE_DEBUG, "shardrouter.c: realloc returned NULL. "
-                                "service count[%d] buffer size [%u] tried to allocate [%u]",
-                                sz, sizeof(SERVICE*)*(sz), sizeof(SERVICE*)*(sz * 2))));
+                MXS_ERROR("Memory reallocation failed.");
+                MXS_DEBUG("shardrouter.c: realloc returned NULL. "
+                          "service count[%d] buffer size [%lu] tried to allocate [%lu]",
+                          sz, sizeof(SERVICE*) * (sz), sizeof(SERVICE*) * (sz * 2));
                 free(res_svc);
                 free(router);
                 return NULL;
@@ -984,7 +935,7 @@ createInstance(SERVICE *service, char **options)
 	{
 	    free(res_svc);
 	    free(router);
-	    skygw_log_write(LOGFILE_ERROR, "Error : No service named '%s' found.", options[i]);
+	    MXS_ERROR("No service named '%s' found.", options[i]);
 	    return NULL;
 	}
         i++;
@@ -999,8 +950,8 @@ createInstance(SERVICE *service, char **options)
 
     if(i < min_nsvc)
     {
-        skygw_log_write(LOGFILE_ERROR, "Error : Not enough parameters for 'subservice' router option. Shardrouter requires at least %d "
-                        "configured services to work.", min_nsvc);
+        MXS_ERROR("Not enough parameters for 'subservice' router option. Shardrouter requires at least %d "
+                  "configured services to work.", min_nsvc);
         free(router->services);
         free(router);
         return NULL;
@@ -1013,7 +964,7 @@ createInstance(SERVICE *service, char **options)
     router->bitvalue = 0;
 
     /**
-     * Read config version number from service to inform what configuration 
+     * Read config version number from service to inform what configuration
      * is used if any.
      */
     router->shardrouter_version = service->svc_config_version;
@@ -1067,8 +1018,8 @@ newSession(
 #endif
 
     client_rses->router = router;
-    client_rses->rses_mysql_session = (MYSQL_session*) session->data;
-    client_rses->rses_client_dcb = (DCB*) session->client;
+    client_rses->rses_mysql_session = (MYSQL_session*) session->client_dcb->data;
+    client_rses->rses_client_dcb = (DCB*) session->client_dcb;
     client_rses->rses_autocommit_enabled = true;
     client_rses->rses_transaction_active = false;
     client_rses->session = session;
@@ -1076,12 +1027,12 @@ newSession(
     client_rses->replydcb->func.read = fakeReply;
     client_rses->replydcb->state = DCB_STATE_POLLING;
     client_rses->replydcb->session = session;
-    
+
     client_rses->routedcb = dcb_alloc(DCB_ROLE_REQUEST_HANDLER);
     client_rses->routedcb->func.read = fakeQuery;
     client_rses->routedcb->state = DCB_STATE_POLLING;
     client_rses->routedcb->session = session;
-    
+
     spinlock_init(&client_rses->rses_lock);
 
     client_rses->subservice = calloc(router->n_services, sizeof(SUBSERVICE*));
@@ -1100,68 +1051,65 @@ newSession(
         {
             goto errorblock;
         }
-        
+
         /* TODO: add NULL value checks */
         client_rses->subservice[i] = subsvc;
-        
+
         subsvc->scur = calloc(1,sizeof(sescmd_cursor_t));
         if(subsvc->scur == NULL)
         {
             subsvc_set_state(subsvc,SUBSVC_FAILED);
-            skygw_log_write_flush(LOGFILE_ERROR,"Error : Memory allocation failed in shardrouter.");
+            MXS_ERROR("Memory allocation failed in shardrouter.");
             continue;
         }
         subsvc->scur->scmd_cur_rses = client_rses;
         subsvc->scur->scmd_cur_ptr_property = client_rses->rses_properties;
         subsvc->service = router->services[i];
         subsvc->dcb = dcb_clone(client_rses->rses_client_dcb);
-        
+
         if(subsvc->dcb == NULL){
             subsvc_set_state(subsvc,SUBSVC_FAILED);
-            skygw_log_write_flush(LOGFILE_ERROR,"Error : Failed to clone client DCB in shardrouter.");
+            MXS_ERROR("Failed to clone client DCB in shardrouter.");
             continue;
         }
-        
+
         subsvc->session = session_alloc(subsvc->service,subsvc->dcb);
-        
+
         if(subsvc->session == NULL){
             dcb_close(subsvc->dcb);
             subsvc->dcb = NULL;
             subsvc_set_state(subsvc,SUBSVC_FAILED);
-            skygw_log_write_flush(LOGFILE_ERROR,"Error : Failed to create subsession for service %s in shardrouter.",subsvc->service->name);
+            MXS_ERROR("Failed to create subsession for service %s in shardrouter.",subsvc->service->name);
             continue;
         }
-        
+
         dummy_filterdef = filter_alloc("tee_dummy","tee_dummy");
-        
+
         if(dummy_filterdef == NULL)
         {
             subsvc_set_state(subsvc,SUBSVC_FAILED);
-            skygw_log_write_flush(LOGFILE_ERROR,"Error : Failed to allocate filter definition in shardrouter.");
+            MXS_ERROR("Failed to allocate filter definition in shardrouter.");
             continue;
         }
         dummy_filterdef->obj = &dummyObject;
-        dummy_filterdef->filter = (FILTER*)client_rses; 
+        dummy_filterdef->filter = (FILTER*)client_rses;
         dummy_upstream = filterUpstream(dummy_filterdef,subsvc->session,&subsvc->session->tail);
-        
+
         if(dummy_upstream == NULL)
         {
            subsvc_set_state(subsvc,SUBSVC_FAILED);
-           skygw_log_write_flush(LOGFILE_ERROR,"Error : Failed to set filterUpstream in shardrouter.");
-            continue; 
+           MXS_ERROR("Failed to set filterUpstream in shardrouter.");
+            continue;
         }
-        
+
         subsvc->session->tail = *dummy_upstream;
-        
-        
+
+
         subsvc_set_state(subsvc,SUBSVC_OK);
-        
+
         free(dummy_upstream);
     }
 
-
-    /** Copy backend pointers to router session. */
-    client_rses->rses_capabilities = RCAP_TYPE_STMT_INPUT;
     router->stats.n_sessions += 1;
 
     /**
@@ -1221,13 +1169,11 @@ closeSession(
 {
     ROUTER_CLIENT_SES* router_cli_ses;
     int i;
-    LOGIF(LD, (skygw_log_write(LOGFILE_DEBUG,
-                               "%lu [RWSplit:closeSession]",
-                               pthread_self())));
+    MXS_DEBUG("%lu [RWSplit:closeSession]", pthread_self());
 
-    /** 
+    /**
      * router session can be NULL if newSession failed and it is discarding
-     * its connections and DCB's. 
+     * its connections and DCB's.
      */
     if(router_session == NULL)
     {
@@ -1245,17 +1191,17 @@ closeSession(
         ROUTER_OBJECT* rtr;
         ROUTER* rinst;
         void *rses;
-        SESSION *ses;
-        
+        SESSION *one_session;
+
         for(i = 0;i<router_cli_ses->n_subservice;i++)
         {
             rtr = router_cli_ses->subservice[i]->service->router;
             rinst = router_cli_ses->subservice[i]->service->router_instance;
-            ses = router_cli_ses->subservice[i]->session;
-            if(ses != NULL)
+            one_session = router_cli_ses->subservice[i]->session;
+            if(one_session != NULL)
             {
-                rses = ses->router_session;
-                ses->state = SESSION_STATE_STOPPING;
+                rses = one_session->router_session;
+                one_session->state = SESSION_STATE_STOPPING;
                 rtr->closeSession(rinst,rses);
             }
             router_cli_ses->subservice[i]->state = SUBSVC_CLOSED;
@@ -1264,7 +1210,7 @@ closeSession(
         router_cli_ses->routedcb->session = NULL;
         dcb_close(router_cli_ses->replydcb);
         dcb_close(router_cli_ses->routedcb);
-        
+
         /** Unlock */
         rses_end_locked_router_action(router_cli_ses);
     }
@@ -1280,10 +1226,10 @@ freeSession(
 
     router_cli_ses = (ROUTER_CLIENT_SES *) router_client_session;
 
-   
-    /** 
-     * For each property type, walk through the list, finalize properties 
-     * and free the allocated memory. 
+
+    /**
+     * For each property type, walk through the list, finalize properties
+     * and free the allocated memory.
      */
     for(i = RSES_PROP_TYPE_FIRST; i < RSES_PROP_TYPE_COUNT; i++)
     {
@@ -1297,10 +1243,10 @@ freeSession(
             p = q;
         }
     }
-    
+
     for(i = 0;i<router_cli_ses->n_subservice;i++)
     {
-        
+
         /* TODO: free router client session */
         free(router_cli_ses->subservice[i]);
     }
@@ -1312,7 +1258,7 @@ freeSession(
      * all the memory and other resources associated
      * to the client session.
      */
-    hashtable_free(router_cli_ses->dbhash);    
+    hashtable_free(router_cli_ses->dbhash);
     free(router_cli_ses);
     return;
 }
@@ -1320,16 +1266,16 @@ freeSession(
 /**
  * Examine the query type, transaction state and routing hints. Find out the
  * target for query routing.
- * 
- *  @param qtype      Type of query 
+ *
+ *  @param qtype      Type of query
  *  @param trx_active Is transcation active or not
  *  @param hint       Pointer to list of hints attached to the query buffer
- * 
- *  @return bitfield including the routing target, or the target server name 
+ *
+ *  @return bitfield including the routing target, or the target server name
  *          if the query would otherwise be routed to slave.
  */
 static route_target_t
-get_shard_route_target(skygw_query_type_t qtype,
+get_shard_route_target(qc_query_type_t qtype,
                        bool trx_active, /*< !!! turha ? */
                        HINT* hint) /*< !!! turha ? */
 {
@@ -1355,10 +1301,7 @@ get_shard_route_target(skygw_query_type_t qtype,
         target = TARGET_ANY;
     }
 #if defined(SS_DEBUG)
-    LOGIF(LT, (skygw_log_write(
-                               LOGFILE_TRACE,
-                               "Selected target \"%s\"",
-                               STRTARGET(target))));
+    MXS_INFO("Selected target \"%s\"", STRTARGET(target));
 #endif
     return target;
 }
@@ -1511,7 +1454,7 @@ gen_show_dbs_response(ROUTER_INSTANCE* router, ROUTER_CLIENT_SES* client)
     rval = gwbuf_append(rval, last_packet);
 
     rval = gwbuf_make_contiguous(rval);
-
+    hashtable_iterator_free(iter);
     return rval;
 }
 
@@ -1540,7 +1483,7 @@ routeQuery(ROUTER* instance,
            void* router_session,
            GWBUF* querybuf)
 {
-    skygw_query_type_t qtype = QUERY_TYPE_UNKNOWN;
+    qc_query_type_t qtype = QUERY_TYPE_UNKNOWN;
     mysql_server_cmd_t packet_type;
     uint8_t* packet;
     int i,ret = 1;
@@ -1555,7 +1498,7 @@ routeQuery(ROUTER* instance,
     char db[MYSQL_DATABASE_MAXLEN + 1];
     char errbuf[26+MYSQL_DATABASE_MAXLEN];
 
-    skygw_log_write_flush(LOGFILE_DEBUG,"shardrouter: routeQuery");
+    MXS_DEBUG("shardrouter: routeQuery");
     CHK_CLIENT_RSES(router_cli_ses);
 
     /** Dirty read for quick check if router is closed. */
@@ -1568,9 +1511,7 @@ routeQuery(ROUTER* instance,
     /** Lock router session */
     if(!rses_begin_locked_router_action(router_cli_ses))
     {
-        LOGIF(LT, (skygw_log_write(
-                                   LOGFILE_TRACE,
-                                   "Route query aborted! Routing session is closed <")));
+        MXS_INFO("Route query aborted! Routing session is closed <");
         ret = 0;
         goto retblock;
     }
@@ -1587,9 +1528,9 @@ routeQuery(ROUTER* instance,
 	    {
 
 		char* querystr = modutil_get_SQL(querybuf);
-		skygw_log_write(LOGFILE_DEBUG,"shardrouter: Storing query for session %p: %s",
-			 router_cli_ses->rses_client_dcb->session,
-			 querystr);
+		MXS_DEBUG("shardrouter: Storing query for session %p: %s",
+                          router_cli_ses->rses_client_dcb->session,
+                          querystr);
 		free(querystr);
 		gwbuf_make_contiguous(querybuf);
 		GWBUF* ptr = router_cli_ses->queue;
@@ -1615,28 +1556,25 @@ routeQuery(ROUTER* instance,
         }
 
     rses_end_locked_router_action(router_cli_ses);
-    
+
     packet = GWBUF_DATA(querybuf);
     packet_type = packet[4];
 
     if(rses_is_closed)
     {
-        /** 
-         * MYSQL_COM_QUIT may have sent by client and as a part of backend 
+        /**
+         * MYSQL_COM_QUIT may have sent by client and as a part of backend
          * closing procedure.
          */
         if(packet_type != MYSQL_COM_QUIT)
         {
             char* query_str = modutil_get_query(querybuf);
 
-            LOGIF(LE,
-                  (skygw_log_write_flush(
-                                         LOGFILE_ERROR,
-                                         "Error: Can't route %s:%s:\"%s\" to "
-                                         "backend server. Router is closed.",
-                                         STRPACKETTYPE(packet_type),
-                                         STRQTYPE(qtype),
-                                         (query_str == NULL ? "(empty)" : query_str))));
+            MXS_ERROR("Can't route %s:%s:\"%s\" to "
+                      "backend server. Router is closed.",
+                      STRPACKETTYPE(packet_type),
+                      STRQTYPE(qtype),
+                      (query_str == NULL ? "(empty)" : query_str));
             free(query_str);
         }
         ret = 0;
@@ -1669,11 +1607,11 @@ routeQuery(ROUTER* instance,
         break;
 
     case MYSQL_COM_QUERY:
-        qtype = query_classifier_get_type(querybuf);
+        qtype = qc_get_type(querybuf);
         break;
 
     case MYSQL_COM_STMT_PREPARE:
-        qtype = query_classifier_get_type(querybuf);
+        qtype = qc_get_type(querybuf);
         qtype |= QUERY_TYPE_PREPARE_STMT;
         break;
 
@@ -1693,33 +1631,31 @@ routeQuery(ROUTER* instance,
     default:
         break;
     } /**< switch by packet type */
-    
+
     if(packet_type == MYSQL_COM_INIT_DB)
     {
-        if(!(change_successful = change_current_db(router_cli_ses->rses_mysql_session,
+        if(!(change_successful = change_current_db(router_cli_ses->current_db,
 						   router_cli_ses->dbhash,
 						   querybuf)))
         {
 	    extract_database(querybuf,db);
-	    snprintf(errbuf,"Unknown database: %s",db);
+	    snprintf(errbuf,25+MYSQL_DATABASE_MAXLEN,"Unknown database: %s",db);
 	    create_error_reply(errbuf,router_cli_ses->replydcb);
-            LOGIF(LE, (skygw_log_write_flush(
-                                             LOGFILE_ERROR,
-                                             "Error : Changing database failed.")));
+            MXS_ERROR("Changing database failed.");
             return 1;
         }
     }
 
     /**
-     * Find out whether the query should be routed to single server or to 
+     * Find out whether the query should be routed to single server or to
      * all of them.
      */
     if(QUERY_IS_TYPE(qtype, QUERY_TYPE_SHOW_DATABASES))
     {
         /**
-         * Generate custom response that contains all the databases 
+         * Generate custom response that contains all the databases
          */
-       
+
         GWBUF* dbres = gen_show_dbs_response(inst,router_cli_ses);
         poll_add_epollin_event_to_dcb(router_cli_ses->replydcb,dbres);
         ret = 1;
@@ -1734,7 +1670,7 @@ routeQuery(ROUTER* instance,
     {
         tname = hashtable_fetch(router_cli_ses->dbhash, router_cli_ses->rses_mysql_session->db);
         route_target = TARGET_NAMED_SERVER;
-        
+
     }
     else if(route_target != TARGET_ALL &&
             (tname = get_shard_target_name(inst, router_cli_ses, querybuf, qtype)) != NULL)
@@ -1761,7 +1697,7 @@ routeQuery(ROUTER* instance,
              * No current database and no databases in query or
              * the database is ignored, route to first available backend.
              */
-            
+
             route_target = TARGET_ANY;
 
         }
@@ -1770,7 +1706,7 @@ routeQuery(ROUTER* instance,
             if(!change_successful)
             {
                 /**
-                 * Bad shard status. The changing of the database 
+                 * Bad shard status. The changing of the database
                  * was not successful and the error message was already sent.
                  */
 
@@ -1805,9 +1741,7 @@ routeQuery(ROUTER* instance,
     /** Lock router session */
     if(!rses_begin_locked_router_action(router_cli_ses))
     {
-        LOGIF(LT, (skygw_log_write(
-                                   LOGFILE_TRACE,
-                                   "Route query aborted! Routing session is closed <")));
+        MXS_INFO("Route query aborted! Routing session is closed <");
         ret = 0;
         goto retblock;
     }
@@ -1843,20 +1777,18 @@ routeQuery(ROUTER* instance,
     if(TARGET_IS_NAMED_SERVER(route_target))
     {
         /**
-         * Search backend server by name or replication lag. 
+         * Search backend server by name or replication lag.
          * If it fails, then try to find valid slave or master.
          */
 
         succp = get_shard_subsvc(&target_subsvc,router_cli_ses,tname);
-       
+
         if(!succp)
         {
-            LOGIF(LT, (skygw_log_write(
-                                       LOGFILE_TRACE,
-                                       "Was supposed to route to named server "
-                                       "%s but couldn't find the server in a "
-                                       "suitable state.",
-                                       tname)));
+            MXS_INFO("Was supposed to route to named server "
+                     "%s but couldn't find the server in a "
+                     "suitable state.",
+                     tname);
         }
     }
 
@@ -1864,12 +1796,12 @@ routeQuery(ROUTER* instance,
     {
         sescmd_cursor_t* scur;
         scur = target_subsvc->scur;
-        /** 
-         * Store current stmt if execution of previous session command 
+        /**
+         * Store current stmt if execution of previous session command
          * haven't completed yet. Note that according to MySQL protocol
          * there can only be one such non-sescmd stmt at the time.
          */
-        if(scur && sescmd_cursor_is_active(scur)) 
+        if(scur && sescmd_cursor_is_active(scur))
         {
             target_subsvc->pending_cmd = gwbuf_clone(querybuf);
             rses_end_locked_router_action(router_cli_ses);
@@ -1879,22 +1811,20 @@ routeQuery(ROUTER* instance,
 
         if(SESSION_ROUTE_QUERY(target_subsvc->session,querybuf) == 1)
         {
-            
+
 
             atomic_add(&inst->stats.n_queries, 1);
             /**
              * Add one query response waiter to backend reference
              */
             subsvc_set_state(target_subsvc,SUBSVC_QUERY_ACTIVE|SUBSVC_WAITING_RESULT);
-            
+
             atomic_add(&target_subsvc->n_res_waiting, 1);
-            
+
         }
         else
         {
-            LOGIF(LE, (skygw_log_write_flush(
-                                             LOGFILE_ERROR,
-                                             "Error : Routing query failed.")));
+            MXS_ERROR("Routing query failed.");
             ret = 0;
         }
     }
@@ -1909,18 +1839,18 @@ retblock:
     return ret;
 }
 
-/** 
+/**
  * @node Acquires lock to router client session if it is not closed.
  *
  * Parameters:
  * @param rses - in, use
- *          
+ *
  *
  * @return true if router session was not closed. If return value is true
  * it means that router is locked, and must be unlocked later. False, if
  * router was closed before lock was acquired.
  *
- * 
+ *
  * @details (write detailed description here)
  *
  */
@@ -1951,7 +1881,7 @@ return_succp:
 
 /** to be inline'd */
 
-/** 
+/**
  * @node Releases router client session lock.
  *
  * Parameters:
@@ -1960,7 +1890,7 @@ return_succp:
  *
  * @return void
  *
- * 
+ *
  * @details (write detailed description here)
  *
  */
@@ -2025,7 +1955,7 @@ diagnostic(ROUTER *instance, DCB *dcb)
                    "Operations\n");
         dcb_printf(dcb,
                    "\t\t                               Global  Router\n");
-        
+
 
     }
 
@@ -2037,7 +1967,7 @@ diagnostic(ROUTER *instance, DCB *dcb)
  * The routine will reply to client for session change with master server data
  *
  * @param	instance	The router instance
- * @param	router_session	The router session 
+ * @param	router_session	The router session
  * @param	backend_dcb	The backend DCB
  * @param	queue		The GWBUF with reply data
  */
@@ -2048,12 +1978,12 @@ clientReply(
             GWBUF* writebuf,
             DCB* backend_dcb)
 {
-    
+
     SESSION_ROUTE_REPLY(backend_dcb->session, writebuf);
     return;
 }
 
-/** 
+/**
  * Create a generic router session property strcture.
  */
 static rses_property_t*
@@ -2098,13 +2028,11 @@ rses_property_done(
         break;
 
     default:
-        LOGIF(LD, (skygw_log_write(
-                                   LOGFILE_DEBUG,
-                                   "%lu [rses_property_done] Unknown property type %d "
-                                   "in property %p",
-                                   pthread_self(),
-                                   prop->rses_prop_type,
-                                   prop)));
+        MXS_DEBUG("%lu [rses_property_done] Unknown property type %d "
+                  "in property %p",
+                  pthread_self(),
+                  prop->rses_prop_type,
+                  prop);
 
         ss_dassert(false);
         break;
@@ -2116,7 +2044,7 @@ rses_property_done(
  * Add property to the router_client_ses structure's rses_properties
  * array. The slot is determined by the type of property.
  * In each slot there is a list of properties of similar type.
- * 
+ *
  * Router client session must be locked.
  */
 static void
@@ -2147,7 +2075,7 @@ rses_property_add(
     }
 }
 
-/** 
+/**
  * Router session must be locked.
  * Return session command pointer if succeed, NULL if failed.
  */
@@ -2211,14 +2139,14 @@ mysql_sescmd_done(
  * command are handled here.
  * Read session commands from property list. If command is already replied,
  * discard packet. Else send reply to client. In both cases move cursor forward
- * until all session command replies are handled. 
- * 
+ * until all session command replies are handled.
+ *
  * Cases that are expected to happen and which are handled:
  * s = response not yet replied to client, S = already replied response,
  * q = query
  * 1. q+        for example : select * from mysql.user
  * 2. s+        for example : set autocommit=1
- * 3. S+        
+ * 3. S+
  * 4. sq+
  * 5. Sq+
  * 6. Ss+
@@ -2240,9 +2168,9 @@ sescmd_cursor_process_replies(
 
     CHK_GWBUF(replybuf);
 
-    /** 
-     * Walk through packets in the message and the list of session 
-     * commands. 
+    /**
+     * Walk through packets in the message and the list of session
+     * commands.
      */
     while(scmd != NULL && replybuf != NULL)
     {
@@ -2263,7 +2191,7 @@ sescmd_cursor_process_replies(
                 replybuf = gwbuf_consume(replybuf, buflen);
             }
             /** Set response status received */
-            
+
             subsvc_clear_state(subsvc, SUBSVC_WAITING_RESULT);
         }
             /** Response is in the buffer and it will be sent to client. */
@@ -2291,7 +2219,7 @@ sescmd_cursor_process_replies(
 
 /**
  * Get the address of current session command.
- * 
+ *
  * Router session must be locked */
 static mysql_sescmd_t*
 sescmd_cursor_get_command(
@@ -2333,9 +2261,9 @@ sescmd_cursor_set_active(
     sescmd_cursor->scmd_cur_active = value;
 }
 
-/** 
- * Clone session command's command buffer. 
- * Router session must be locked 
+/**
+ * Clone session command's command buffer.
+ * Router session must be locked
  */
 static GWBUF*
 sescmd_cursor_clone_querybuf(
@@ -2411,12 +2339,12 @@ execute_sescmd_history(
 
 /**
  * If session command cursor is passive, sends the command to backend for
- * execution. 
- *  
+ * execution.
+ *
  * Returns true if command was sent or added successfully to the queue.
  * Returns false if command sending failed or if there are no pending session
  * 	commands.
- * 
+ *
  * Router session must be locked.
  */
 static bool
@@ -2425,21 +2353,21 @@ execute_sescmd_in_backend(SUBSERVICE* subsvc)
     bool succp;
     int rc = 0;
     sescmd_cursor_t* scur;
-    
+
 
     if(SUBSVC_IS_CLOSED(subsvc) || !SUBSVC_IS_OK(subsvc))
     {
         succp = false;
         goto return_succp;
     }
-    
+
     if(!subsvc_is_valid(subsvc))
     {
         succp = false;
         goto return_succp;
     }
-    
-    /** 
+
+    /**
      * Get cursor pointer and copy of command buffer to cursor.
      */
     scur = subsvc->scur;
@@ -2448,9 +2376,7 @@ execute_sescmd_in_backend(SUBSERVICE* subsvc)
     if(sescmd_cursor_get_command(scur) == NULL)
     {
         succp = false;
-        LOGIF(LT, (skygw_log_write_flush(
-                                         LOGFILE_TRACE,
-                                         "Cursor had no pending session commands.")));
+        MXS_INFO("Cursor had no pending session commands.");
 
         goto return_succp;
     }
@@ -2469,27 +2395,10 @@ execute_sescmd_in_backend(SUBSERVICE* subsvc)
         rc = SESSION_ROUTE_QUERY(subsvc->session,sescmd_cursor_clone_querybuf(scur));
         break;
 
-    case MYSQL_COM_INIT_DB:
-    {
-        /**
-         * Record database name and store to session.
-         */
-        GWBUF* tmpbuf;
-        MYSQL_session* data;
-        unsigned int qlen;
-
-        data = subsvc->session->data;
-        tmpbuf = scur->scmd_cur_cmd->my_sescmd_buf;
-        qlen = MYSQL_GET_PACKET_LEN((unsigned char*) tmpbuf->start);
-        memset(data->db, 0, MYSQL_DATABASE_MAXLEN + 1);
-        strncpy(data->db, tmpbuf->start + 5, qlen - 1);
-        rc = SESSION_ROUTE_QUERY(subsvc->session,sescmd_cursor_clone_querybuf(scur));
-    }
-        /** Fallthrough */
     case MYSQL_COM_QUERY:
     default:
-        /** 
-         * Mark session command buffer, it triggers writing 
+        /**
+         * Mark session command buffer, it triggers writing
          * MySQL command to protocol
          */
         gwbuf_set_type(scur->scmd_cur_cmd->my_sescmd_buf, GWBUF_TYPE_SESCMD);
@@ -2513,8 +2422,8 @@ return_succp:
  * Moves cursor to next property and copied address of its sescmd to cursor.
  * Current propery must be non-null.
  * If current property is the last on the list, *scur->scmd_ptr_property == NULL
- * 
- * Router session must be locked 
+ *
+ * Router session must be locked
  */
 static bool
 sescmd_cursor_next(
@@ -2589,37 +2498,22 @@ mysql_sescmd_get_property(
 }
 
 /**
- * Return rc, rc < 0 if router session is closed. rc == 0 if there are no 
- * capabilities specified, rc > 0 when there are capabilities.
+ * Return RCAP_TYPE_STMT_INPUT
  */
-static uint8_t
-getCapabilities(ROUTER* inst,
-                void* router_session)
+static int
+getCapabilities()
 {
-    ROUTER_CLIENT_SES* rses = (ROUTER_CLIENT_SES *) router_session;
-    uint8_t rc;
-
-    if(!rses_begin_locked_router_action(rses))
-    {
-        rc = 0xff;
-        goto return_rc;
-    }
-    rc = rses->rses_capabilities;
-
-    rses_end_locked_router_action(rses);
-
-return_rc:
-    return rc;
+    return RCAP_TYPE_STMT_INPUT;
 }
 
 /**
  * Execute in backends used by current router session.
  * Save session variable commands to router session property
- * struct. Thus, they can be replayed in backends which are 
+ * struct. Thus, they can be replayed in backends which are
  * started and joined later.
- * 
+ *
  * Suppress redundant OK packets sent by backends.
- * 
+ *
  * The first OK packet is replied to the client.
  * Return true if succeed, false is returned if router session was closed or
  * if execute_sescmd_in_backend failed.
@@ -2630,20 +2524,18 @@ route_session_write(
                     GWBUF* querybuf,
                     ROUTER_INSTANCE* inst,
                     unsigned char packet_type,
-                    skygw_query_type_t qtype)
+                    qc_query_type_t qtype)
 {
     bool succp;
     rses_property_t* prop;
     SUBSERVICE* subsvc;
     int i;
 
-    LOGIF(LT, (skygw_log_write(
-                               LOGFILE_TRACE,
-                               "Session write, routing to all servers.")));
+    MXS_INFO("Session write, routing to all servers.");
 
     /**
      * These are one-way messages and server doesn't respond to them.
-     * Therefore reply processing is unnecessary and session 
+     * Therefore reply processing is unnecessary and session
      * command property is not needed. It is just routed to all available
      * backends.
      */
@@ -2666,14 +2558,12 @@ route_session_write(
         {
             subsvc = router_cli_ses->subservice[i];
 
-            if(LOG_IS_ENABLED(LOGFILE_TRACE))
+            if (MXS_LOG_PRIORITY_IS_ENABLED(LOG_INFO))
             {
-                LOGIF(LT, (skygw_log_write(
-                                           LOGFILE_TRACE,
-                                           "Route query to %s%s%s",
-                                           i == 0 ? ">":"",
-                                           subsvc->service->name,
-                                           i+1 >= router_cli_ses->n_subservice ? "<" : "")));
+                MXS_INFO("Route query to %s%s%s",
+                         i == 0 ? ">":"",
+                         subsvc->service->name,
+                         i+1 >= router_cli_ses->n_subservice ? "<" : "");
             }
 
             if(!SUBSVC_IS_CLOSED(subsvc) && SUBSVC_IS_OK(subsvc))
@@ -2702,8 +2592,8 @@ route_session_write(
         succp = false;
         goto return_succp;
     }
-    /** 
-     * Additional reference is created to querybuf to 
+    /**
+     * Additional reference is created to querybuf to
      * prevent it from being released before properties
      * are cleaned up as a part of router sessionclean-up.
      */
@@ -2716,33 +2606,31 @@ route_session_write(
     for(i = 0; i < router_cli_ses->n_subservice; i++)
     {
         subsvc = router_cli_ses->subservice[i];
-        
+
         if(!SUBSVC_IS_CLOSED(subsvc))
         {
             sescmd_cursor_t* scur;
 
-            if(LOG_IS_ENABLED(LOGFILE_TRACE))
+            if (MXS_LOG_PRIORITY_IS_ENABLED(LOG_INFO))
             {
-                 LOGIF(LT, (skygw_log_write(
-                                           LOGFILE_TRACE,
-                                           "Route query to %s%s%s",
-                                           i == 0 ? ">":"",
-                                           subsvc->service->name,
-                                           i+1 >= router_cli_ses->n_subservice ? "<" : "")));
+                MXS_INFO("Route query to %s%s%s",
+                         i == 0 ? ">":"",
+                         subsvc->service->name,
+                         i+1 >= router_cli_ses->n_subservice ? "<" : "");
             }
 
-            
 
-            
-           
+
+
+
             scur = subsvc->scur;
-            
-            /** 
+
+            /**
              * Add one waiter to backend reference.
              */
             subsvc_set_state(subsvc,SUBSVC_WAITING_RESULT);
-            
-            /** 
+
+            /**
              * Start execution if cursor is not already executing.
              * Otherwise, cursor will execute pending commands
              * when it completes with previous commands.
@@ -2751,10 +2639,8 @@ route_session_write(
             {
                 succp = true;
 
-                LOGIF(LT, (skygw_log_write(
-                                           LOGFILE_TRACE,
-                                           "Service %s already executing sescmd.",
-                                           subsvc->service->name)));
+                MXS_INFO("Service %s already executing sescmd.",
+                         subsvc->service->name);
             }
             else
             {
@@ -2762,11 +2648,9 @@ route_session_write(
 
                 if(!succp)
                 {
-                    LOGIF(LE, (skygw_log_write_flush(
-                                                     LOGFILE_ERROR,
-                                                     "Error : Failed to execute session "
-                                                     "command in %s",
-                                                     subsvc->service->name)));
+                    MXS_ERROR("Failed to execute session "
+                              "command in %s",
+                              subsvc->service->name);
                 }
             }
         }
@@ -2784,16 +2668,16 @@ return_succp:
 
 /**
  * Error Handler routine to resolve _backend_ failures. If it succeeds then there
- * are enough operative backends available and connected. Otherwise it fails, 
+ * are enough operative backends available and connected. Otherwise it fails,
  * and session is terminated.
  *
  * @param       instance        The router instance
  * @param       router_session  The router session
  * @param       errmsgbuf       The error message to reply
  * @param       backend_dcb     The backend DCB
- * @param       action          The action: REPLY, REPLY_AND_CLOSE, NEW_CONNECTION
- * @param       succp           Result of action. 
- * 
+ * @param       action     	The action: ERRACT_NEW_CONNECTION or ERRACT_REPLY_CLIENT
+ * @param	succp		Result of action: true if router can continue
+ *
  * Even if succp == true connecting to new slave may have failed. succp is to
  * tell whether router has enough master/slave connections to continue work.
  */
@@ -2809,14 +2693,12 @@ handleError(
     SESSION* session;
     ROUTER_CLIENT_SES* rses = (ROUTER_CLIENT_SES *) router_session;
 
-    if(action == ERRACT_RESET)
-        return;
-    
     CHK_DCB(backend_dcb);
+
     /** Don't handle same error twice on same DCB */
     if(backend_dcb->dcb_errhandle_called)
     {
-        /** we optimistically assume that previous call succeed */        
+        /** we optimistically assume that previous call succeed */
         *succp = true;
         return;
     }
@@ -2828,38 +2710,39 @@ handleError(
 
     if(session == NULL || rses == NULL)
     {
-        if(succp)
-            *succp = false;
-        return;
-    }
-    CHK_SESSION(session);
-    CHK_CLIENT_RSES(rses);
-
-    switch(action)
-    {
-    case ERRACT_NEW_CONNECTION:
-    {
-        if(!rses_begin_locked_router_action(rses))
-        {
-            *succp = false;
-            return;
-        }
-
-        rses_end_locked_router_action(rses);
-        break;
-    }
-
-    case ERRACT_REPLY_CLIENT:
-    {
-
-        *succp = false; /*< no new backend servers were made available */
-        break;
-    }
-
-    default:
         *succp = false;
-        break;
     }
+    else
+    {
+        CHK_SESSION(session);
+        CHK_CLIENT_RSES(rses);
+
+        switch(action)
+        {
+            case ERRACT_NEW_CONNECTION:
+            {
+                if(!rses_begin_locked_router_action(rses))
+                {
+                    *succp = false;
+                    break;
+                }
+
+                rses_end_locked_router_action(rses);
+                break;
+            }
+
+            case ERRACT_REPLY_CLIENT:
+            {
+                *succp = false; /*< no new backend servers were made available */
+                break;
+            }
+
+            default:
+                *succp = false;
+                break;
+        }
+    }
+    dcb_close(backend_dcb);
 }
 
 
@@ -2880,13 +2763,13 @@ static SUBSERVICE* get_subsvc_from_ses(ROUTER_CLIENT_SES* rses, SESSION* ses)
             return rses->subservice[i];
         }
     }
-    
+
     return NULL;
 }
 
 
 /**
- * Calls hang-up function for DCB if it is not both running and in 
+ * Calls hang-up function for DCB if it is not both running and in
  * master/slave/joined/ndb role. Called by DCB's callback routine.
  *
  * TODO: See if there's a way to inject this into the subservices

@@ -24,11 +24,16 @@
  * @verbatim
  * Revision History
  *
- * Date		Who		Description
- * 10/06/13	Mark Riddoch	Initial implementation
+ * Date         Who             Description
+ * 10/06/13     Mark Riddoch    Initial implementation
+ * 23/06/15     Martin Brampton Alternative for C++
  *
  * @endverbatim
  */
 
+#ifdef __cplusplus
+extern "C" int atomic_add(int *variable, int value);
+#else
 extern int atomic_add(int *variable, int value);
+#endif
 #endif

@@ -31,17 +31,68 @@ include(cmake/CheckPlatform.cmake)
 
 check_deps()
 check_dirs()
+find_package(OpenSSL)
 find_package(Valgrind)
-find_package(MySQLClient)
+find_package(MariaDBConnector)
 find_package(MySQL)
 find_package(Pandoc)
 find_package(TCMalloc)
 find_package(Jemalloc)
+find_package(Git)
+find_package(CURL) 
+find_package(RabbitMQ)
+
+# Find or build PCRE2
+# Read BuildPCRE2 for details about how to add pcre2 as a dependency to a target
+find_package(PCRE2)
+if(NOT PCRE2_FOUND)
+  message(STATUS "Using bundled PCRE2 library")
+  include(cmake/BuildPCRE2.cmake)
+endif()
+
+include_directories(${PCRE2_INCLUDE_DIRS})
+
+# If the connector was not found, download and build it from source
+if(NOT MARIADB_CONNECTOR_FOUND)
+  message(STATUS "Building MariaDB Connector-C from source.")
+  include(cmake/BuildMariaDBConnector.cmake)
+endif()
+
 # You can find the variables set by this in the FindCURL.cmake file
 # which is a default module in CMake.
-find_package(CURL) 
+
 if(NOT CURL_FOUND)
   message(FATAL_ERROR "Failed to locate dependency: libcurl")
+endif()
+
+if(NOT OPENSSL_FOUND)
+  message(FATAL_ERROR "Failed to locate dependency: OpenSSL")
+else()
+  if(OPENSSL_VERSION VERSION_LESS 1 AND NOT FORCE_OPENSSL100)
+    add_definitions("-DOPENSSL_0_9")
+  else()
+    add_definitions("-DOPENSSL_1_0")
+  endif()
+endif()
+
+if(GIT_FOUND)
+  message(STATUS "Found git ${GIT_VERSION_STRING}")
+  execute_process(COMMAND ${GIT_EXECUTABLE} rev-list --max-count=1 HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_COMMIT
+    ERROR_VARIABLE GIT_ERROR
+    RESULT_VARIABLE GIT_RVAL)
+  if(${GIT_RVAL} EQUAL 0)
+    string(REPLACE "\n" "" MAXSCALE_COMMIT ${GIT_COMMIT})
+    message(STATUS "Commit ID: ${MAXSCALE_COMMIT}")
+  else()
+    message(STATUS "Git exited with non-zero value: ${GIT_ERROR}")
+    message(STATUS "Could not find repository in source folder, MaxScale commit ID will not be resolved. Will use 'source-build' for commit ID.")
+    set(MAXSCALE_COMMIT "source-build")
+  endif()
+else()
+  message(WARNING "Could not find git, MaxScale commit ID will not be resolved. Will use 'source-build' for commit ID.")
+  set(MAXSCALE_COMMIT "source-build")
 endif()
 
 set(CMAKE_INSTALL_RPATH ${CMAKE_INSTALL_RPATH}:${CMAKE_INSTALL_PREFIX}/${MAXSCALE_LIBDIR})
@@ -63,7 +114,7 @@ configure_file(${CMAKE_SOURCE_DIR}/etc/postinst.in ${CMAKE_BINARY_DIR}/postinst 
 configure_file(${CMAKE_SOURCE_DIR}/etc/postrm.in ${CMAKE_BINARY_DIR}/postrm @ONLY)
 configure_file(${CMAKE_SOURCE_DIR}/server/test/maxscale_test.cnf ${CMAKE_BINARY_DIR}/maxscale.cnf @ONLY)
 
-set(FLAGS "-Wall -Wno-unused-variable -Wno-unused-function -fPIC" CACHE STRING "Compilation flags")
+set(FLAGS "-Wall -Wno-unused-variable -Wno-unused-function -Werror -fPIC" CACHE STRING "Compilation flags")
 set(DEBUG_FLAGS "-ggdb -pthread -pipe -Wformat -fstack-protector --param=ssp-buffer-size=4" CACHE STRING "Debug compilation flags")
 
 if(CMAKE_VERSION VERSION_GREATER 2.6)
@@ -102,7 +153,13 @@ if(PROFILE)
   set(FLAGS "${FLAGS} -pg " CACHE STRING "Compilation flags" FORCE)
 endif()
 
-set(CMAKE_C_FLAGS "${FLAGS}")
+if(USE_C99)
+  message(STATUS "Using C99 standard")
+  set(CMAKE_C_FLAGS "-std=c99 -D_GNU_SOURCE=1 ${FLAGS}")
+else()
+  set(CMAKE_C_FLAGS "${FLAGS}")
+endif()
+
 set(CMAKE_C_FLAGS_DEBUG "${DEBUG_FLAGS} -DSS_DEBUG -DLOG_ASSERT")
 set(CMAKE_C_FLAGS_RELEASE "")
 set(CMAKE_C_FLAGS_RELWITHDEBINFO "-ggdb")
@@ -112,27 +169,17 @@ set(CMAKE_CXX_FLAGS_DEBUG "${DEBUG_FLAGS} -DSS_DEBUG -DLOG_ASSERT")
 set(CMAKE_CXX_FLAGS_RELEASE "")
 set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-ggdb")
 
-subdirs(MYSQL_DIR_ALL ${MYSQL_DIR})
-foreach(DIR ${MYSQL_DIR_ALL})
-  include_directories(${DIR})
-endforeach()
-
-include_directories(${MYSQL_DIR}/..)
 include_directories(utils)
-include_directories(log_manager)
-include_directories(query_classifier)
 include_directories(server/include)
-include_directories(server/include/maxscale)
 include_directories(server/inih)
 include_directories(server/modules/include)
 include_directories(${CMAKE_BINARY_DIR}/server/include)
 include_directories(${CURL_INCLUDE_DIRS})
 
 add_subdirectory(plugins)
-add_subdirectory(utils)
-add_subdirectory(log_manager)
 add_subdirectory(query_classifier)
 add_subdirectory(server)
+add_subdirectory(plugin_process)
 if(NOT WITHOUT_MAXADMIN)
   add_subdirectory(client)
 endif()
@@ -142,23 +189,28 @@ execute_process(COMMAND perl ${CMAKE_SOURCE_DIR}/Documentation/format.pl
 ${CMAKE_SOURCE_DIR}/Documentation/Changelog.md
 ${CMAKE_BINARY_DIR}/Changelog.txt)
 execute_process(COMMAND perl ${CMAKE_SOURCE_DIR}/Documentation/format.pl 
-${CMAKE_SOURCE_DIR}/Documentation/Release-Notes/MaxScale-1.1-Release-Notes.md
+${CMAKE_SOURCE_DIR}/Documentation/Release-Notes/MaxScale-1.2.0-Release-Notes.md
  ${CMAKE_BINARY_DIR}/ReleaseNotes.txt)
 execute_process(COMMAND perl ${CMAKE_SOURCE_DIR}/Documentation/format.pl 
-${CMAKE_SOURCE_DIR}/Documentation/Upgrading-To-MaxScale-1.1.0.md
- ${CMAKE_BINARY_DIR}/UpgradingToMaxScale110.txt)
+${CMAKE_SOURCE_DIR}/Documentation/Upgrading/Upgrading-To-MaxScale-1.2.md
+ ${CMAKE_BINARY_DIR}/UpgradingToMaxScale12.txt)
 
 
 install(FILES ${CMAKE_BINARY_DIR}/Changelog.txt DESTINATION ${MAXSCALE_SHAREDIR})
 install(FILES ${CMAKE_BINARY_DIR}/ReleaseNotes.txt DESTINATION ${MAXSCALE_SHAREDIR})
-install(FILES ${CMAKE_BINARY_DIR}/UpgradingToMaxScale110.txt DESTINATION ${MAXSCALE_SHAREDIR})
+install(FILES ${CMAKE_BINARY_DIR}/UpgradingToMaxScale12.txt DESTINATION ${MAXSCALE_SHAREDIR})
 install(FILES server/maxscale_template.cnf DESTINATION ${MAXSCALE_SHAREDIR})
+if(WITH_MAXSCALE_CNF)
+  install(FILES server/maxscale_template.cnf DESTINATION ${MAXSCALE_CONFDIR} RENAME maxscale.cnf.template)
+endif()
 install(FILES server/maxscale_binlogserver_template.cnf DESTINATION ${MAXSCALE_SHAREDIR})
-install(FILES ${ERRMSG} DESTINATION ${MAXSCALE_VARDIR}/lib/maxscale 
-  PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+install(PROGRAMS ${ERRMSG} DESTINATION ${MAXSCALE_VARDIR}/lib/maxscale)
 install(FILES ${CMAKE_SOURCE_DIR}/COPYRIGHT DESTINATION ${MAXSCALE_SHAREDIR})
 install(FILES ${CMAKE_SOURCE_DIR}/README DESTINATION ${MAXSCALE_SHAREDIR})
 install(FILES ${CMAKE_SOURCE_DIR}/LICENSE DESTINATION ${MAXSCALE_SHAREDIR})
+install(FILES etc/lsyncd_example.conf DESTINATION ${MAXSCALE_SHAREDIR})
+install(FILES Documentation/maxscale.1 DESTINATION ${CMAKE_INSTALL_DATADIR}/man/man1)
+
 
 # Install startup scripts and ldconfig files
 if(WITH_SCRIPTS)
@@ -172,46 +224,46 @@ if(WITH_SCRIPTS)
   if(PACKAGE)
     message(STATUS "maxscale.conf will unpack to: /etc/ld.so.conf.d")
     message(STATUS "startup scripts will unpack to to: /etc/init.d")
-  install(FILES ${CMAKE_BINARY_DIR}/maxscale DESTINATION ${MAXSCALE_SHAREDIR} 
-    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
-  install(FILES ${CMAKE_BINARY_DIR}/maxscale.conf DESTINATION ${MAXSCALE_SHAREDIR}
-    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
-  install(FILES ${CMAKE_BINARY_DIR}/maxscale.service DESTINATION ${MAXSCALE_SHAREDIR}
-    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+    message(STATUS "systemd service files will unpack to to: /usr/lib/systemd/system")
+  install(PROGRAMS ${CMAKE_BINARY_DIR}/maxscale DESTINATION ${MAXSCALE_SHAREDIR} )
+  install(FILES ${CMAKE_BINARY_DIR}/maxscale.conf DESTINATION ${MAXSCALE_SHAREDIR})
+  install(FILES ${CMAKE_BINARY_DIR}/maxscale.service DESTINATION ${MAXSCALE_SHAREDIR})
   else()
-  install(FILES ${CMAKE_BINARY_DIR}/maxscale DESTINATION /etc/init.d 
-    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
-  install(FILES ${CMAKE_BINARY_DIR}/maxscale.conf DESTINATION /etc/ld.so.conf.d 
-    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+  install(PROGRAMS ${CMAKE_BINARY_DIR}/maxscale DESTINATION /etc/init.d)
+  install(FILES ${CMAKE_BINARY_DIR}/maxscale.conf DESTINATION /etc/ld.so.conf.d)
+  install(FILES ${CMAKE_BINARY_DIR}/maxscale.service DESTINATION /usr/lib/systemd/system)
   message(STATUS "Installing maxscale.conf to: /etc/ld.so.conf.d")
   message(STATUS "Installing startup scripts to: /etc/init.d")
+  message(STATUS "Installing systemd service files to: /usr/lib/systemd/system")
   endif()
 endif()
 
 # Only do packaging if configured
 if(PACKAGE)
 
+  execute_process(COMMAND uname -m COMMAND tr -d '\n' OUTPUT_VARIABLE CPACK_PACKAGE_ARCHITECTURE)
   # Install the files copied by the postinst script into the share folder
-  install(FILES ${CMAKE_BINARY_DIR}/maxscale DESTINATION ${MAXSCALE_SHAREDIR}
-    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
-  install(FILES ${CMAKE_BINARY_DIR}/maxscale.conf DESTINATION ${MAXSCALE_SHAREDIR}
-    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
-  install(FILES ${CMAKE_BINARY_DIR}/postinst DESTINATION ${MAXSCALE_SHAREDIR}
-    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
-  install(FILES ${CMAKE_BINARY_DIR}/postrm DESTINATION ${MAXSCALE_SHAREDIR}
-    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+  install(PROGRAMS ${CMAKE_BINARY_DIR}/maxscale DESTINATION ${MAXSCALE_SHAREDIR})
+  install(FILES ${CMAKE_BINARY_DIR}/maxscale.conf DESTINATION ${MAXSCALE_SHAREDIR})
+  install(PROGRAMS ${CMAKE_BINARY_DIR}/postinst DESTINATION ${MAXSCALE_SHAREDIR})
+  install(PROGRAMS ${CMAKE_BINARY_DIR}/postrm DESTINATION ${MAXSCALE_SHAREDIR})
   if(${CMAKE_VERSION} VERSION_LESS 2.8.12)
     message(WARNING "CMake version is ${CMAKE_VERSION}. Building of packages requires version 2.8.12 or greater.")
   else()
 
     # Generic CPack configuration variables
+    SET(CPACK_SET_DESTDIR ON)
     set(CPACK_STRIP_FILES FALSE)
     set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "MaxScale")
     set(CPACK_PACKAGE_VERSION_MAJOR "${MAXSCALE_VERSION_MAJOR}")
     set(CPACK_PACKAGE_VERSION_MINOR "${MAXSCALE_VERSION_MINOR}")
     set(CPACK_PACKAGE_VERSION_PATCH "${MAXSCALE_VERSION_PATCH}")
     set(CPACK_PACKAGE_CONTACT "MariaDB Corporation Ab")
-    set(CPACK_PACKAGE_FILE_NAME "maxscale-${MAXSCALE_VERSION}")
+    if(DISTRIB_SUFFIX)
+      set(CPACK_PACKAGE_FILE_NAME "maxscale-${MAXSCALE_VERSION}-${MAXSCALE_BUILD_NUMBER}.${DISTRIB_SUFFIX}.${CPACK_PACKAGE_ARCHITECTURE}")
+    else()
+      set(CPACK_PACKAGE_FILE_NAME "maxscale-${MAXSCALE_VERSION}-${MAXSCALE_BUILD_NUMBER}.${CPACK_PACKAGE_ARCHITECTURE}")
+    endif()
     set(CPACK_PACKAGE_NAME "maxscale")
     set(CPACK_PACKAGE_VENDOR "MariaDB Corporation Ab")
     set(CPACK_PACKAGE_DESCRIPTION_FILE ${CMAKE_SOURCE_DIR}/etc/DESCRIPTION)
@@ -225,7 +277,8 @@ if(PACKAGE)
     if(NOT ( ${RPMBUILD} STREQUAL "RPMBUILD-NOTFOUND" ) )
       include(cmake/package_rpm.cmake)
       message(STATUS "Generating RPM packages")
-    elseif(NOT ( ${DEBBUILD} STREQUAL "DEBBUILD-NOTFOUND" ) )
+    endif()
+    if(NOT ( ${DEBBUILD} STREQUAL "DEBBUILD-NOTFOUND" ) )
       include(cmake/package_deb.cmake)
       message(STATUS "Generating DEB packages for ${DEB_ARCHITECTURE}")
     endif()
@@ -241,13 +294,13 @@ add_custom_target(buildtests
 ) 
 
 add_custom_target(testall 
-  COMMAND ${CMAKE_COMMAND} ${CMAKE_SOURCE_DIR} -DBUILD_TESTS=Y -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR} -DWITH_SCRIPTS=N -DMAXSCALE_VARDIR=${CMAKE_BINARY_DIR}
+  COMMAND ${CMAKE_COMMAND} ${CMAKE_SOURCE_DIR} -DBUILD_TESTS=Y -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR} -DWITH_SCRIPTS=N -DWITH_MAXSCALE_CNF=N -DMAXSCALE_VARDIR=${CMAKE_BINARY_DIR}
   COMMAND make install
   COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/cmake/testall.cmake
   COMMENT "Running full test suite..." VERBATIM)
 
 add_custom_target(testcore
-  COMMAND ${CMAKE_COMMAND} ${CMAKE_SOURCE_DIR} -DBUILD_TESTS=Y -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR} -DWITH_SCRIPTS=N -DMAXSCALE_VARDIR=${CMAKE_BINARY_DIR}
+  COMMAND ${CMAKE_COMMAND} ${CMAKE_SOURCE_DIR} -DBUILD_TESTS=Y -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR} -DWITH_SCRIPTS=N -DWITH_MAXSCALE_CNF=N -DMAXSCALE_VARDIR=${CMAKE_BINARY_DIR}
   COMMAND make install
   COMMAND ctest -R Internal
   COMMENT "Running core test suite..." VERBATIM)

@@ -1,26 +1,20 @@
 #ifndef TEST_UTILS_H
 #define TEST_UTILS_H
-#include <poll.h>
+#include <maxscale/poll.h>
 #include <dcb.h>
 #include <housekeeper.h>
 #include <maxscale_test.h>
 #include <log_manager.h>
+#include <statistics.h>
 
 void init_test_env(char *path)
 {
-    int argc = 5;
-    
-    char* argv[] =
-        {
-            "log_manager",
-            "-l",
-            "LOGFILE_ERROR",
-            "-j",
-            path? path:TEST_LOG_DIR,
-            NULL
-        };
+    int argc = 3;
 
-    skygw_logmanager_init(argc,argv);
+    const char* logdir = path ? path : TEST_LOG_DIR;
+
+    ts_stats_init();
+    mxs_log_init(NULL, logdir, MXS_LOG_TARGET_DEFAULT);
     poll_init();
     hkinit();
 }

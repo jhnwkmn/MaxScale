@@ -1,4 +1,4 @@
-MaxScale Release Notes
+# MariaDB MaxScale 1.0 Beta Release Notes
 
 1.0 Beta
 
@@ -14,7 +14,7 @@ The MaxScale monitor module for Master/Slave replication is now able to correctl
 
 ### Support For Prepared Statements
 
-Prepared statements are now correctly recognised by MaxScale, with the prepare stage being sent to all the eligible servers that could eventually run the statement. Statements are then execute on a single server.
+Prepared statements are now correctly recognized by MaxScale, with the prepare stage being sent to all the eligible servers that could eventually run the statement. Statements are then execute on a single server.
 
 ### Slave Failure Resilience
 

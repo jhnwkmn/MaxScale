@@ -28,6 +28,13 @@
  * @endverbatim
  */
 
+// To ensure that ss_info_assert asserts also when builing in non-debug mode.
+#if !defined(SS_DEBUG)
+#define SS_DEBUG
+#endif
+#if defined(NDEBUG)
+#undef NDEBUG
+#endif
 #define FAILTEST(s) printf("TEST FAILED: " s "\n");return 1;
 #include <my_config.h>
 #include <mysql.h>
@@ -40,6 +47,8 @@
 #include <housekeeper.h>
 #include <buffer.h>
 #include <regex.h>
+#include <modules.h>
+#include <maxscale_test.h>
 
 static char* server_options[] = {
     "MariaDB Corporation MaxScale",
@@ -63,6 +72,10 @@ static char* server_groups[] = {
     NULL
 };
 
+int config_load(char *);
+void config_enable_feedback_task(void);
+int module_create_feedback_report(GWBUF **buffer, MODULES *modules, FEEDBACK_CONF *cfg);
+int do_http_post(GWBUF *buffer, void *cfg);
 
 int main(int argc, char** argv)
 {
@@ -74,7 +87,8 @@ int main(int argc, char** argv)
 
     hkinit();
 
-    cnf = strdup("/etc/MaxScale.cnf");
+    cnf = malloc(sizeof(char) * (strlen(TEST_DIR) + strlen("/maxscale.cnf") + 1));
+    sprintf(cnf, "%s/maxscale.cnf", TEST_DIR);
 
     printf("Config: %s\n",cnf);
 
@@ -85,7 +99,7 @@ int main(int argc, char** argv)
        }
 
     config_load(cnf);
-
+    config_enable_feedback_task();
     if ((fc = config_get_feedback_data()) == NULL)
     {
         FAILTEST("Configuration for Feedback was NULL.");

@@ -17,6 +17,7 @@
  *
  * Copyright MariaDB Corporation Ab 2013-2014
  */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,7 +32,6 @@
 #include <dcb.h>
 #include <modinfo.h>
 #include <maxconfig.h>
-#include <monitor_common.h>
 #include <externcmd.h>
 
 /**
@@ -42,15 +42,16 @@
 /**
  * The handle for an instance of a NDB Cluster Monitor module
  */
-typedef struct {
-	SPINLOCK  lock;			/**< The monitor spinlock */
-	pthread_t tid;			/**< id of monitor thread */ 
-	int    	  shutdown;		/**< Flag to shutdown the monitor thread */
-	int       status;		/**< Monitor status */
-	unsigned long         id;	/**< Monitor ID */
-	MONITOR_SERVERS *master;	/**< Master server for MySQL Master/Slave replication */
-        char* script; /*< Script to call when state changes occur on servers */
-        bool events[MAX_MONITOR_EVENT]; /*< enabled events */
+typedef struct
+{
+    SPINLOCK lock; /**< The monitor spinlock */
+    pthread_t tid; /**< id of monitor thread */
+    int shutdown; /**< Flag to shutdown the monitor thread */
+    int status; /**< Monitor status */
+    unsigned long id; /**< Monitor ID */
+    MONITOR_SERVERS *master; /**< Master server for MySQL Master/Slave replication */
+    char* script; /*< Script to call when state changes occur on servers */
+    bool events[MAX_MONITOR_EVENT]; /*< enabled events */
 } MYSQL_MONITOR;
 
 #endif

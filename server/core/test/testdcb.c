@@ -27,6 +27,13 @@
  * @endverbatim
  */
 
+// To ensure that ss_info_assert asserts also when builing in non-debug mode.
+#if !defined(SS_DEBUG)
+#define SS_DEBUG
+#endif
+#if defined(NDEBUG)
+#undef NDEBUG
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -59,12 +66,12 @@ int     buflen;
         printAllDCBs();
         ss_info_dassert(true, "Something is true");
         ss_dfprintf(stderr, "\t..done\n");
-        dcb_free(dcb);
+        dcb_close(dcb);
         ss_dfprintf(stderr, "Freed original dcb");
         ss_info_dassert(!dcb_isvalid(dcb), "Freed DCB must not be valid");
         ss_dfprintf(stderr, "\t..done\nMake clone DCB a zombie");
         clone->state = DCB_STATE_NOPOLLING;
-        dcb_add_to_zombieslist(clone);
+        dcb_close(clone);
         ss_info_dassert(dcb_get_zombies() == clone, "Clone DCB must be start of zombie list now");
         ss_dfprintf(stderr, "\t..done\nProcess the zombies list");
         dcb_process_zombies(0);

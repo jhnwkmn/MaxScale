@@ -12,6 +12,8 @@ You will need a number of tools and libraries in order to achieve this.
 
 * libedit 2.11 or later (used by the MaxAdmin tool)
 
+* Bison and Flex
+
 # Obtaining MariaDB packages
 
 MaxScale requires the server and the development packages for the MariaDB server. Either the 10.0 or the 5.5 version of the MariaDB server can be used. You can obtain these by following the instructions on the MariaDB.org site: [https://downloads.mariadb.org/](https://downloads.mariadb.org/)
@@ -22,13 +24,13 @@ After following the instructions on that site you should have a working MariaDB 
 
 The full list of dependencies for the most common distributions is provided in this section. If your system is not listed here, MaxScale building isn't guaranteed to be compatible but might still be successful.
 
-## RHEL, CentOS and Fedora
+## RHEL and CentOS
 
-You will need to install all of the following packages for all versions of RHEL, CentOS and Fedora.
+You will need to install all of the following packages for all versions of RHEL and CentOS.
 
 ```
-gcc gcc-c++ ncurses-devel bison glibc-devel cmake libgcc perl make libtool 
-openssl-devel libaio libaio-devel librabbitmq-devel
+gcc gcc-c++ ncurses-devel bison flex glibc-devel cmake libgcc perl make libtool \
+    openssl-devel libaio libaio-devel librabbitmq-devel libcurl-devel pcre-devel
 ```
 
 In addition, if you wish to to build an RPM package include:
@@ -39,7 +41,7 @@ rpm-build
 
 There are also some version specific packages you need to install.
 
-#### RHEL 6, 7, CentOS 6, 7, Fedora:
+#### RHEL 6, 7, CentOS 6, 7:
 
 ```
 libedit-devel
@@ -51,15 +53,9 @@ libedit-devel
 mariadb-devel mariadb-embedded-devel 
 ```
 
-#### RHEL 5, 6, CentOS 5, 6, Fedora 19, 20
+#### RHEL 5, 6, CentOS 5, 6
 ```
 MariaDB-devel MariaDB-server
-```
-
-#### Fedora 19, 20
-
-```
-systemtap-sdt-devel
 ```
 
 ## Ubuntu and Debian
@@ -67,8 +63,8 @@ systemtap-sdt-devel
 These packages are required on all versions of Ubuntu and Debian.
 
 ```
-	build-essential libssl-dev libaio-dev ncurses-dev bison
-	cmake perl libtool librabbitmq-dev     
+	build-essential libssl-dev libaio-dev ncurses-dev bison flex \
+	cmake perl libtool librabbitmq-dev libcurl-dev libpcre3-dev
 ```
 
 If you want to build a DEB package, you will also need:
@@ -81,22 +77,21 @@ You will also need some version specific packages.
 
 #### Ubuntu 14.04 or later, Debian 8 (Jessie) or later
 
+*At the time of writing, the libmariadbd-dev package is broken and does not contain the required libmysqld.a library. Please follow the install instructions for earlier version of Ubuntu and Debian.*
+
 ```
 	libmariadbclient-dev libmariadbd-dev                            
 ```
 
 #### Earlier versions of Ubuntu or Debian
 
-For these, you will need to obtain the MariaDB embedded library. It has to be manually extracted from the tarball. But first ascertain what version of glibc is installed. Run the command:
+For these, you will need to obtain the MariaDB embedded library. It has to be manually extracted from the tarballs at the MariaDB site. But first ascertain what version of glibc is installed. Run the command:
 
 ```
 	dpkg -l | grep libc6
 ```
 
-which will show the version number. If the version is less than 2.14 you should obtain the library from:
-[https://downloads.mariadb.org/interstitial/mariadb-5.5.41/bintar-linux-x86_64/mariadb-5.5.41-linux-x86_64.tar.gz](https://downloads.mariadb.org/interstitial/mariadb-5.5.41/bintar-linux-x86_64/mariadb-5.5.41-linux-x86_64.tar.gz). 
-Otherwise, from:
-[https://downloads.mariadb.org/interstitial/mariadb-5.5.41/bintar-linux-glibc_214-x86_64/mariadb-5.5.41-linux-glibc_214-x86_64.tar.gz](https://downloads.mariadb.org/interstitial/mariadb-5.5.41/bintar-linux-glibc_214-x86_64/mariadb-5.5.41-linux-glibc_214-x86_64.tar.gz)
+which will show the version number. For versions older than 2.14 you should obtain the library which supports GLIBC versions older than 2.14 and for newer versions, the library which supports newer GLIBC versions should be used.
 
 The suggested location for extracting the tarball is `/usr` so the operation can be done by the following commands:
 
@@ -106,22 +101,6 @@ The suggested location for extracting the tarball is `/usr` so the operation can
 ```
 
 where /path/to/mariadb.library.tar.gz is replaced by the actual path and name of the downloaded tarball.
-
-## OpenSUSE
-
-At the time this guide was written, the MariaDB development packages for OpenSUSE were broken and the build failed.
-
-The packages required are:
-
-```
-gcc gcc-c++ ncurses-devel bison glibc-devel cmake libgcc_s1 perl 
-make libtool libopenssl-devel libaio libaio-devel 
-libedit-devel librabbitmq-devel
-	MariaDB-devel MariaDB-client MariaDB-server
-```
-
-If zypper ask which MariaDB client should be installed `MariaDB-client` or `mariadb-client`
-	 please select `MariaDB-client`. This is the package provided by the MariaDB repository.
 
 # Obtaining the MaxScale Source Code
 
@@ -152,16 +131,15 @@ wipe the build directory clean without the danger of deleting important files wh
 something goes wrong. Building 'out-of-source' also allows you to have multiple 
 configurations of MaxScale at the same time.
 
-The default values that CMake uses can be found in the 'macros.cmake' file. 
-If you wish to change these, edit the 'macros.cmake' file or define the 
-variables manually at configuration time.
+The default values that MaxScale uses for CMake can be found in the 'macros.cmake' file under the `cmake` folder. 
+If you wish to change these, edit the 'macros.cmake' file or define the variables manually at configuration time.
 
 To display all CMake variables with their descriptions:
 
 ```
 cmake .. -LH
 ```
-This is a useful command if you have your libraries installed in non-standard locations.
+This is a useful command if you have your libraries installed in non-standard locations and need to provide them manually.
 
 When you are ready to run cmake, provide the following command:
 
@@ -170,7 +148,7 @@ cmake ..
 ```
 This will automatically search your system for the right files and libraries and if you have your libraries installed in standard locations, it should succeed. If there are errors with the CMake configuration, read the error messages, provide the needed variables for CMake and call `cmake` again with the additional parameters.
 
-Here is an example of a cmake call with parameters for custom library locations, building of tests and without the installation of init scripts.
+Here is an example of a cmake call with parameters for custom library locations, building of tests and without the installation of init scripts or the example maxscale.cnf file.
 
 ```
 $ cmake .. -DMYSQL_DIR=/usr/mariadb-5.5.41-linux-x86_64/include/mysql \
@@ -178,7 +156,7 @@ $ cmake .. -DMYSQL_DIR=/usr/mariadb-5.5.41-linux-x86_64/include/mysql \
 -DMYSQLCLIENT_LIBRARIES=/usr/mariadb-5.5.41-linux-x86_64/lib/libmysqlclient.so \
 -DERRMSG=/usr/mariadb-5.5.41-linux-x86_64/share/english/errmsg.sys \
 -DCMAKE_INSTALL_PREFIX=/home/maxscale/MaxScale -DBUILD_TESTS=Y \
--DWITH_SCRIPTS=N
+-DWITH_SCRIPTS=N -DWITH_MAXSCALE_CNF=N
 
 <pre>
 -- CMake version: 2.8.12.2
@@ -241,7 +219,7 @@ $ make install
 
 This will result in an installation being created which is identical to that which would be achieved by installing the binary package.
 
-By default, MaxScale installs to `/usr/local/mariadb-maxscale` and places init.d scripts and ldconfig files into their folders. Change the `CMAKE_INSTALL_PREFIX` variable to your desired installation directory and set `WITH_SCRIPTS=N` to prevent the init.d script and ldconfig file installation.
+When building from source, MaxScale installs to `/usr/local/` and places init.d scripts and ldconfig files into their folders. Change the `CMAKE_INSTALL_PREFIX` variable to your desired installation directory and set `WITH_SCRIPTS=N` to prevent the init.d script and ldconfig file installation.
 
 Other useful targets for Make are `documentation`, which generates the Doxygen documentation, and `uninstall` which uninstall MaxScale binaries after an install.
 

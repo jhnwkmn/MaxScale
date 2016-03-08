@@ -139,7 +139,7 @@ GetModuleObject()
 /**
  * Create an instance of the router for a particular service
  * within the gateway.
- * 
+ *
  * @param service	The service this router is being create for
  * @param options	The options for this query router
  *
@@ -183,7 +183,7 @@ WEB_SESSION	*wsession;
  * @param instance	The router instance data
  * @param session	The session being closed
  */
-static	void 	
+static	void
 closeSession(ROUTER *instance, void *session)
 {
 	free(session);
@@ -196,7 +196,7 @@ static void freeSession(
         return;
 }
 
-static	int	
+static	int
 routeQuery(ROUTER *instance, void *session, GWBUF *queue)
 {
 WEB_SESSION	*wsession = (WEB_SESSION *)session;
@@ -334,8 +334,13 @@ char date[64] = "";
 const char *fmt = "%a, %d %b %Y %H:%M:%S GMT";
 
 	time_t httpd_current_time = time(NULL);
+        struct tm tm;
+        char buffer[32]; // asctime_r documentation requires 26
 
-	strftime(date, sizeof(date), fmt, localtime(&httpd_current_time));
+        localtime_r(&http_current_time, &tm);
+        asctime_r(&tm, buffer);
+
+	strftime(date, sizeof(date), fmt, buffer);
 
 	dcb_printf(dcb, "HTTP/1.1 200 OK\r\nDate: %s\r\nServer: %s\r\nConnection: close\r\nContent-Type: text/html\r\n", date, "MaxScale");
 
@@ -362,7 +367,7 @@ send_static_html(DCB *dcb, char *html)
 static void
 send_index(WEB_SESSION	*session)
 {
-DCB	*dcb = session->session->client;
+DCB	*dcb = session->session->client_dcb;
 
 	send_html_header(dcb);
 	send_static_html(dcb, index_page);
@@ -377,7 +382,7 @@ DCB	*dcb = session->session->client;
 static void
 send_css(WEB_SESSION	*session)
 {
-DCB	*dcb = session->session->client;
+DCB	*dcb = session->session->client_dcb;
 
 	send_html_header(dcb);
 	send_static_html(dcb, css);
@@ -392,7 +397,7 @@ DCB	*dcb = session->session->client;
 static void
 send_title(WEB_SESSION	*session)
 {
-DCB	*dcb = session->session->client;
+DCB	*dcb = session->session->client_dcb;
 
 	send_html_header(dcb);
 	send_static_html(dcb, title_page);
@@ -407,7 +412,7 @@ DCB	*dcb = session->session->client;
 static void
 send_frame1(WEB_SESSION	*session)
 {
-DCB	*dcb = session->session->client;
+DCB	*dcb = session->session->client_dcb;
 
 	send_html_header(dcb);
 	send_static_html(dcb, frame1_page);
@@ -422,7 +427,7 @@ DCB	*dcb = session->session->client;
 static void
 send_menu(WEB_SESSION	*session)
 {
-DCB	*dcb = session->session->client;
+DCB	*dcb = session->session->client_dcb;
 
 	send_html_header(dcb);
 	send_static_html(dcb, menu_page);
@@ -437,7 +442,7 @@ DCB	*dcb = session->session->client;
 static void
 send_blank(WEB_SESSION	*session)
 {
-DCB	*dcb = session->session->client;
+DCB	*dcb = session->session->client_dcb;
 
 	send_html_header(dcb);
 	send_static_html(dcb, blank_page);
@@ -460,7 +465,7 @@ service_row(SERVICE *service, DCB *dcb)
 }
 
 /**
- * Send the services page. This produces a table by means of the 
+ * Send the services page. This produces a table by means of the
  * serviceIterate call.
  *
  * @param session	The router session
@@ -468,7 +473,7 @@ service_row(SERVICE *service, DCB *dcb)
 static void
 send_services(WEB_SESSION *session)
 {
-DCB	*dcb = session->session->client;
+DCB	*dcb = session->session->client_dcb;
 
 	send_html_header(dcb);
 	dcb_printf(dcb, "<HTML><HEAD>");
@@ -492,8 +497,8 @@ static void
 session_row(SESSION *session, DCB *dcb)
 {
 	dcb_printf(dcb, "<TR><TD>%-16p</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD></TR>\n",
-		session, ((session->client && session->client->remote)
-			? session->client->remote : ""),
+		session, ((session->client_dcb && session->client_dcb->remote)
+			? session->client_dcb->remote : ""),
                         (session->service && session->service->name
 				? session->service->name : ""),
                         session_state(session->state));
@@ -509,7 +514,7 @@ session_row(SESSION *session, DCB *dcb)
 static void
 send_sessions(WEB_SESSION *session)
 {
-DCB	*dcb = session->session->client;
+DCB	*dcb = session->session->client_dcb;
 
 	send_html_header(dcb);
 	dcb_printf(dcb, "<HTML><HEAD>");
@@ -545,7 +550,7 @@ server_row(SERVER *server, DCB *dcb)
 static void
 send_servers(WEB_SESSION *session)
 {
-DCB	*dcb = session->session->client;
+DCB	*dcb = session->session->client_dcb;
 
 	send_html_header(dcb);
 	dcb_printf(dcb, "<HTML><HEAD>");
@@ -581,7 +586,7 @@ monitor_row(MONITOR *monitor, DCB *dcb)
 static void
 send_monitors(WEB_SESSION *session)
 {
-DCB	*dcb = session->session->client;
+DCB	*dcb = session->session->client_dcb;
 
 	send_html_header(dcb);
 	dcb_printf(dcb, "<HTML><HEAD>");
@@ -603,7 +608,7 @@ DCB	*dcb = session->session->client;
 static void
 respond_error(WEB_SESSION *session, int err, char *msg)
 {
-DCB	*dcb = session->session->client;
+DCB	*dcb = session->session->client_dcb;
 
 	dcb_printf(dcb, "HTTP/1.1 %d %s\n", err, msg);
 	dcb_printf(dcb, "Content-Type: text/html\n");

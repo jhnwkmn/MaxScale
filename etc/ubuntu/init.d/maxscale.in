@@ -40,11 +40,15 @@ _RETVAL_STATUS_NOT_RUNNING=3
 # Sanity checks.
 [ -x @CMAKE_INSTALL_PREFIX@/@MAXSCALE_BINDIR@/maxscale ] || exit $_RETVAL_NOT_INSTALLED
 
+# Source additional command line arguments.
+[ -f /etc/default/maxscale ] &&  . /etc/default/maxscale
+
 #################################
 # stop/start/status related vars
 #################################
 NAME=maxscale
-DAEMON=@CMAKE_INSTALL_PREFIX@/@MAXSCALE_BINDIR@/maxscale --user=maxscale
+DAEMON=@CMAKE_INSTALL_PREFIX@/@MAXSCALE_BINDIR@/maxscale
+DAEMON_OPTS="--user=maxscale $MAXSCALE_OPTIONS"
 
 # Source function library.
 . /lib/lsb/init-functions
@@ -56,12 +60,42 @@ servicename=maxscale
 RETVAL=0
 
 start() {
+
+    if [ ! -d @MAXSCALE_VARDIR@/log/maxscale ]
+    then
+        mkdir -p @MAXSCALE_VARDIR@/log/maxscale
+    fi
+
+    if [ ! -d @MAXSCALE_VARDIR@/cache/maxscale ]
+    then
+        mkdir -p @MAXSCALE_VARDIR@/cache/maxscale
+    fi
+
+    if [ ! -d @MAXSCALE_VARDIR@/lib/maxscale ]
+    then
+        mkdir -p @MAXSCALE_VARDIR@/lib/maxscale
+    fi
+
+    if [ ! -d @MAXSCALE_VARDIR@/run/maxscale ]
+    then
+        mkdir -p @MAXSCALE_VARDIR@/run/maxscale
+    fi
+
+    chown -R maxscale:maxscale @MAXSCALE_VARDIR@/log/maxscale
+    chown -R maxscale:maxscale @MAXSCALE_VARDIR@/lib/maxscale
+    chown -R maxscale:maxscale @MAXSCALE_VARDIR@/cache/maxscale
+    chown -R maxscale:maxscale @MAXSCALE_VARDIR@/run/maxscale
+    chmod 0755 @MAXSCALE_VARDIR@/log/maxscale
+    chmod 0755 @MAXSCALE_VARDIR@/lib/maxscale
+    chmod 0755 @MAXSCALE_VARDIR@/cache/maxscale
+    chmod 0755 @MAXSCALE_VARDIR@/run/maxscale
+
         log_daemon_msg "Starting MaxScale"
-        start_daemon -p $MAXSCALE_PIDFILE $DAEMON 2> /dev/null > /dev/null
+        start_daemon -p "$MAXSCALE_PIDFILE" $DAEMON $DAEMON_OPTS 2> /dev/null > /dev/null
 
         sleep 2
 
-        status_of_proc -p $MAXSCALE_PIDFILE $DAEMON $NAME
+        status_of_proc -p "$MAXSCALE_PIDFILE" "$DAEMON" $NAME
 
         log_end_msg $?
 }
@@ -77,13 +111,13 @@ stop() {
 reload() {
         log_daemon_msg "Reloading MaxScale"
         
-        kill -HUP $(cat $MAXSCALE_PIDFILE)
+        kill -HUP $(cat "$MAXSCALE_PIDFILE")
 
         log_end_msg $?
 }
 
 maxscale_wait_stop() {
-        PIDTMP=$(pidofproc -p $MAXSCALE_PIDFILE @CMAKE_INSTALL_PREFIX@/@MAXSCALE_BINDIR@/maxscale)
+        PIDTMP=$(pidofproc -p "$MAXSCALE_PIDFILE" "$DAEMON")
         kill -TERM "${PIDTMP:-}" 2> /dev/null;
         if [ -n "${PIDTMP:-}" ] && kill -0 "${PIDTMP:-}" 2> /dev/null; then
                 local i=0
@@ -115,7 +149,7 @@ case "$1" in
 	# return 3 on any error
 
         log_daemon_msg "Checking MaxScale"
-        status_of_proc -p $MAXSCALE_PIDFILE $DAEMON $NAME
+        status_of_proc -p "$MAXSCALE_PIDFILE" "$DAEMON" $NAME
         RETVAL=$?
 
         if [ $RETVAL -ne 0 ]; then

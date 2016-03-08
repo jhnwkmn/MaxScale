@@ -1,13 +1,21 @@
 #Changelog
 
-These are the changes introduced in the next MaxScale version. This is not the official change log and the latest changelog can always be found in here: [MaxScale 1.1 Release Notes](Release-Notes/MaxScale-1.1-Release-Notes.md)
+## MaxScale 1.4
+* Authentication now allows table level resolution of grants. MaxScale service users will now need SELECT privileges on `mysql.tables_priv` to be able to authenticate users at the database and table level.
+
+## MaxScale 1.3
+* Added support for persistent backend connections
+* The *binlog server* is now an integral component of MaxScale.
+* The logging has been changed; instead of different log files there is one log file and different message priorities.
+
+For more details, please refer to [MaxScale 1.3 Release Notes](Release-Notes/MaxScale-1.3.0-Release-Notes.md)
 
 ## MaxScale 1.2
 * Logfiles have been renamed. The log names are now named error.log, messages.log, trace.log and debug.log.
 
 ## MaxScale 1.1.1
 
-* Schemarouter now also allows for an upper limit to session commans.
+* Schemarouter now also allows for an upper limit to session commands.
 * Schemarouter correctly handles SHOW DATABASES responses that span multiple buffers.
 * Readwritesplit and Schemarouter now allow disabling of the session command history.
 

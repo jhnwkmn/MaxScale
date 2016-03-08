@@ -26,6 +26,7 @@
  * Date		Who			Description
  * 16/02/15	Mark Riddoch		Initial implementation
  * 27/02/15	Massimiliano Pinto	Added maxinfo_add_mysql_user
+ * 09/09/2015   Martin Brampton         Modify error handler
  *
  * @endverbatim
  */
@@ -44,7 +45,8 @@
 #include <atomic.h>
 #include <spinlock.h>
 #include <dcb.h>
-#include <poll.h>
+#include <maxscale.h>
+#include <maxscale/poll.h>
 #include <maxinfo.h>
 #include <skygw_utils.h>
 #include <log_manager.h>
@@ -62,11 +64,6 @@ MODULE_INFO 	info = {
 	ROUTER_VERSION,
 	"The MaxScale Information Schema"
 };
-
-/** Defined in log_manager.cc */
-extern int            lm_enabled_logfiles_bitmask;
-extern size_t         log_ses_count[];
-extern __thread log_info_t tls_log_info;
 
 extern char *create_hex_sha1_sha1_passwd(char *passwd);
 
@@ -86,7 +83,7 @@ static	void 	closeSession(ROUTER *instance, void *router_session);
 static	void 	freeSession(ROUTER *instance, void *router_session);
 static	int	execute(ROUTER *instance, void *router_session, GWBUF *queue);
 static	void	diagnostics(ROUTER *instance, DCB *dcb);
-static  uint8_t getCapabilities (ROUTER* inst, void* router_session);
+static  int getCapabilities ();
 static  void             handleError(
         ROUTER           *instance,
         void             *router_session,
@@ -129,10 +126,7 @@ version()
 void
 ModuleInit()
 {
-	LOGIF(LM, (skygw_log_write(
-                           LOGFILE_MESSAGE,
-                           "Initialise MaxInfo router module %s.\n",
-                           version_str)));
+        MXS_NOTICE("Initialise MaxInfo router module %s.", version_str);
 	spinlock_init(&instlock);
 	instances = NULL;
 }
@@ -154,7 +148,7 @@ GetModuleObject()
 /**
  * Create an instance of the router for a particular service
  * within the gateway.
- * 
+ *
  * @param service	The service this router is being create for
  * @param options	Any array of options for the query router
  *
@@ -176,12 +170,7 @@ int		i;
 	{
 		for (i = 0; options[i]; i++)
 		{
-			{
-				LOGIF(LE, (skygw_log_write(
-					LOGFILE_ERROR,
-					"Unknown option for MaxInfo '%s'\n",
-					options[i])));
-			}
+                    MXS_ERROR("Unknown option for MaxInfo '%s'", options[i]);
 		}
 	}
 
@@ -223,7 +212,7 @@ INFO_SESSION	*client;
 		return NULL;
 	}
 	client->session = session;
-	client->dcb = session->client;
+	client->dcb = session->client_dcb;
 	client->queue = NULL;
 
 	spinlock_acquire(&inst->lock);
@@ -243,7 +232,7 @@ INFO_SESSION	*client;
  * @param instance		The router instance data
  * @param router_session	The session being closed
  */
-static	void 	
+static	void
 closeSession(ROUTER *instance, void *router_session)
 {
 INFO_INSTANCE	*inst = (INFO_INSTANCE *)instance;
@@ -291,7 +280,8 @@ static void freeSession(
  * @param       router_session  The router session
  * @param       message         The error message to reply
  * @param       backend_dcb     The backend DCB
- * @param       action     	The action: REPLY, REPLY_AND_CLOSE, NEW_CONNECTION
+ * @param       action     	The action: ERRACT_NEW_CONNECTION or ERRACT_REPLY_CLIENT
+ * @param	succp		Result of action: true iff router can continue
  *
  */
 static void handleError(
@@ -307,13 +297,6 @@ static void handleError(
 	SESSION         *session = backend_dcb->session;
 	session_state_t sesstate;
 
-	/** Reset error handle flag from a given DCB */
-	if (action == ERRACT_RESET)
-	{
-		backend_dcb->dcb_errhandle_called = false;
-		return;
-	}
-	
 	/** Don't handle same error twice on same DCB */
 	if (backend_dcb->dcb_errhandle_called)
 	{
@@ -327,20 +310,21 @@ static void handleError(
 	}
 	spinlock_acquire(&session->ses_lock);
 	sesstate = session->state;
-	client_dcb = session->client;
-	
+	client_dcb = session->client_dcb;
+
 	if (sesstate == SESSION_STATE_ROUTER_READY)
 	{
 		CHK_DCB(client_dcb);
-		spinlock_release(&session->ses_lock);	
+		spinlock_release(&session->ses_lock);
 		client_dcb->func.write(client_dcb, gwbuf_clone(errbuf));
 	}
-	else 
+	else
 	{
 		spinlock_release(&session->ses_lock);
 	}
-	
+
 	/** false because connection is not available anymore */
+        dcb_close(backend_dcb);
 	*succp = false;
 }
 
@@ -353,7 +337,7 @@ static void handleError(
  * @param queue			The queue of data buffers to route
  * @return The number of bytes sent
  */
-static	int	
+static	int
 execute(ROUTER *rinstance, void *router_session, GWBUF *queue)
 {
 INFO_INSTANCE	*instance = (INFO_INSTANCE *)rinstance;
@@ -398,9 +382,8 @@ char		*sql;
 		case COM_STATISTICS:
 			return maxinfo_statistics(instance, session, queue);
 		default:
-			LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR,
-				"maxinfo: Unexpected MySQL command 0x%x",
-				MYSQL_COMMAND(queue))));
+                    MXS_ERROR("maxinfo: Unexpected MySQL command 0x%x",
+                              MYSQL_COMMAND(queue));
 		}
 	}
 
@@ -424,10 +407,8 @@ diagnostics(ROUTER *instance, DCB *dcb)
  *
  * Not used for the maxinfo router
  */
-static uint8_t
-getCapabilities(
-        ROUTER*  inst,
-        void*    router_session)
+static int
+getCapabilities()
 {
         return 0;
 }
@@ -450,11 +431,10 @@ maxinfo_statistics(INFO_INSTANCE *router, INFO_SESSION *session, GWBUF *queue)
 char	result[1000], *ptr;
 GWBUF	*ret;
 int	len;
-extern	int	MaxScaleUptime();
 
 	snprintf(result, 1000,
 		"Uptime: %u  Threads: %u  Sessions: %u ",
-			MaxScaleUptime(),
+			maxscale_uptime(),
 			config_threadcount(),
 			serviceSessionCountAll());
 	if ((ret = gwbuf_alloc(4 + strlen(result))) == NULL)
@@ -491,7 +471,7 @@ int	len;
 	*ptr++ = 0;
 	*ptr++ = 0;
 	*ptr++ = 1;
-	*ptr = 0;		// OK 
+	*ptr = 0;		// OK
 
 	return session->dcb->func.write(session->dcb, ret);
 }
@@ -521,7 +501,7 @@ RESULT_ROW	*row;
 
 /**
  * The hardwired select @@vercom response
- * 
+ *
  * @param dcb	The DCB of the client
  */
 static void
@@ -552,7 +532,6 @@ starttime_row(RESULTSET *result, void *data)
 {
 int		*context = (int *)data;
 RESULT_ROW	*row;
-extern time_t	MaxScaleStarted;
 struct tm	tm;
 static char	buf[40];
 
@@ -560,7 +539,7 @@ static char	buf[40];
 	{
 		(*context)++;
 		row = resultset_make_row(result);
-		sprintf(buf, "%u", (unsigned int)MaxScaleStarted);
+		sprintf(buf, "%u", (unsigned int)maxscale_started());
 		resultset_row_set(row, 0, buf);
 		return row;
 	}
@@ -569,7 +548,7 @@ static char	buf[40];
 
 /**
  * The hardwired select ... as starttime response
- * 
+ *
  * @param dcb	The DCB of the client
  */
 static void
@@ -630,9 +609,8 @@ maxinfo_execute_query(INFO_INSTANCE *instance, INFO_SESSION *session, char *sql)
 MAXINFO_TREE	*tree;
 PARSE_ERROR	err;
 
-	LOGIF(LT, (skygw_log_write(LOGFILE_TRACE,
-			"maxinfo: SQL statement: '%s' for 0x%x.",
-				sql, session->dcb)));
+        MXS_INFO("maxinfo: SQL statement: '%s' for 0x%p.",
+                 sql, session->dcb);
 	if (strcmp(sql, "select @@version_comment limit 1") == 0)
 	{
 		respond_vercom(session->dcb);
@@ -668,10 +646,7 @@ PARSE_ERROR	err;
 	if ((tree = maxinfo_parse(sql, &err)) == NULL)
 	{
 		maxinfo_send_parse_error(session->dcb, sql, err);
-		LOGIF(LM, (skygw_log_write(
-                           LOGFILE_MESSAGE,
-			"Failed to parse SQL statement: '%s'.",
-			sql)));
+		MXS_NOTICE("Failed to parse SQL statement: '%s'.", sql);
 	}
 	else
 		maxinfo_execute(session->dcb, tree);
@@ -729,7 +704,7 @@ static struct uri_table {
  * @param queue		The queue of data buffers to route
  * @return The number of bytes sent
  */
-static	int	
+static	int
 handle_url(INFO_INSTANCE *instance, INFO_SESSION *session, GWBUF *queue)
 {
 char		*uri;
@@ -746,6 +721,7 @@ RESULTSET	*set;
 			resultset_free(set);
 		}
 	}
+	gwbuf_free(queue);
 	return 1;
 }
 
@@ -765,8 +741,7 @@ maxinfo_add_mysql_user(SERVICE *service) {
         char	*service_passwd = NULL;
 
 	if (serviceGetUser(service, &service_user, &service_passwd) == 0) {
-		LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR,
-			"maxinfo: failed to get service user details")));
+                MXS_ERROR("maxinfo: failed to get service user details");
 
 		return 1;
 	}
@@ -774,9 +749,8 @@ maxinfo_add_mysql_user(SERVICE *service) {
 	dpwd = decryptPassword(service->credentials.authdata);
 
 	if (!dpwd) {
-		LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR,
-			"maxinfo: decrypt password failed for service user %s",
-			service_user)));
+                MXS_ERROR("maxinfo: decrypt password failed for service user %s",
+                          service_user);
 
 		return 1;
 	}
@@ -786,11 +760,10 @@ maxinfo_add_mysql_user(SERVICE *service) {
 	newpasswd = create_hex_sha1_sha1_passwd(dpwd);
 
 	if (!newpasswd) {
-		LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR,
-			"maxinfo: create hex_sha1_sha1_password failed for service user %s",
-			service_user)));
+                MXS_ERROR("maxinfo: create hex_sha1_sha1_password failed for service user %s",
+                          service_user);
 		users_free(service->users);
-
+        service->users = NULL;
 		return 1;
 	}
 
